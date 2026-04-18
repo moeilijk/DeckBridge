@@ -1,0 +1,9 @@
+node_modules/
+dist/
+*.js.map
+.env
+.DS_Store
+*.log
+CLAUDE.md
+test-plugin/com.deckbridge.test.sdPlugin/node_modules/
+test-plugin/com.deckbridge.test.sdPlugin/package-lock.json

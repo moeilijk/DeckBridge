@@ -1,0 +1,13 @@
+{
+  "UUID": "com.deckbridge.test",
+  "Version": "0.1.0",
+  "Nodejs": { "Version": "20" },
+  "CodePath": "plugin.js",
+  "Actions": [
+    {
+      "UUID": "com.deckbridge.test.button",
+      "Name": "Test Button",
+      "Tooltip": "Telt klikken en toont het op de knop"
+    }
+  ]
+}

@@ -1,0 +1,30 @@
+{
+  "name": "deckbridge",
+  "version": "0.1.0",
+  "description": "Drop-in Stream Deck software replacement for Linux with Elgato plugin compatibility",
+  "main": "dist/index.js",
+  "scripts": {
+    "dev": "tsx src/index.ts",
+    "build": "tsc",
+    "start": "node dist/index.js"
+  },
+  "keywords": [
+    "streamdeck",
+    "elgato",
+    "linux",
+    "plugin"
+  ],
+  "license": "MIT",
+  "dependencies": {
+    "@elgato-stream-deck/node": "^7.0.0",
+    "sharp": "^0.34.5",
+    "ws": "^8.18.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "@types/sharp": "^0.31.1",
+    "@types/ws": "^8.5.13",
+    "tsx": "^4.19.0",
+    "typescript": "^5.8.0"
+  }
+}
