@@ -10,7 +10,8 @@ interface PluginClient {
 
 export class PluginServer extends EventEmitter {
   private wss: WebSocketServer | null = null
-  private clients = new Map<string, PluginClient>()
+  private clients = new Map<string, PluginClient>()      // pluginUUID → plugin
+  private piByContext = new Map<string, PluginClient>()  // context UUID → PI
   private port: number = 0
 
   async start(): Promise<void> {
@@ -53,21 +54,33 @@ export class PluginServer extends EventEmitter {
       return
     }
 
+    const isPI = msg.event === 'registerPropertyInspector'
     const client: PluginClient = {
       uuid: msg.uuid,
-      type: msg.event === 'registerPlugin' ? 'plugin' : 'propertyInspector',
+      type: isPI ? 'propertyInspector' : 'plugin',
       socket,
     }
 
-    this.clients.set(msg.uuid, client)
-    console.log(`Plugin geregistreerd: ${msg.uuid} (${client.type})`)
-    this.emit('pluginRegistered', msg.uuid, client.type)
+    if (isPI) {
+      // uuid = context UUID van de knop waarvoor de PI opent
+      this.piByContext.set(msg.uuid, client)
+      console.log(`PI geregistreerd voor context: ${msg.uuid}`)
+      socket.on('close', () => {
+        this.piByContext.delete(msg.uuid)
+        this.emit('piClosed', msg.uuid)
+      })
+    } else {
+      this.clients.set(msg.uuid, client)
+      console.log(`Plugin geregistreerd: ${msg.uuid}`)
+      socket.on('close', () => {
+        this.clients.delete(msg.uuid)
+        console.log(`Plugin verbroken: ${msg.uuid}`)
+      })
+    }
 
+    this.emit('pluginRegistered', msg.uuid, client.type)
     socket.on('message', (data) => this.handleMessage(client, data.toString()))
-    socket.on('close', () => {
-      this.clients.delete(msg.uuid)
-      console.log(`Plugin verbroken: ${msg.uuid}`)
-    })
+    socket.on('error', (err) => console.error(`[${msg.uuid}] WS fout:`, err))
   }
 
   private handleMessage(client: PluginClient, raw: string): void {
@@ -77,8 +90,7 @@ export class PluginServer extends EventEmitter {
     } catch {
       return
     }
-
-    this.emit('pluginMessage', client.uuid, msg)
+    this.emit('pluginMessage', client.uuid, client.type, msg)
   }
 
   sendToPlugin(uuid: string, payload: Record<string, unknown>): void {
@@ -86,5 +98,16 @@ export class PluginServer extends EventEmitter {
     if (client?.socket.readyState === WebSocket.OPEN) {
       client.socket.send(JSON.stringify(payload))
     }
+  }
+
+  sendToPropertyInspector(context: string, payload: Record<string, unknown>): void {
+    const pi = this.piByContext.get(context)
+    if (pi?.socket.readyState === WebSocket.OPEN) {
+      pi.socket.send(JSON.stringify(payload))
+    }
+  }
+
+  hasPropertyInspector(context: string): boolean {
+    return this.piByContext.has(context)
   }
 }

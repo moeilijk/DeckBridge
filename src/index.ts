@@ -2,6 +2,7 @@ import { DeviceManager } from './core/hardware/DeviceManager.js'
 import { PluginServer } from './core/websocket/PluginServer.js'
 import { PluginManager } from './core/plugins/PluginManager.js'
 import { ProfileManager } from './core/profiles/ProfileManager.js'
+import { PropertyInspectorServer } from './core/pi/PropertyInspectorServer.js'
 import { renderTitle, renderBlack } from './core/render/renderButton.js'
 import { spawn } from 'child_process'
 import sharp from 'sharp'
@@ -24,11 +25,17 @@ async function main() {
   const pluginServer = new PluginServer()
   const pluginManager = new PluginManager()
   const profileManager = new ProfileManager()
+  const piServer = new PropertyInspectorServer()
 
   await deviceManager.start()
   await deviceManager.clearAll()
   await profileManager.load()
   await pluginServer.start()
+
+  const pluginDir = join(homedir(), '.config', 'DeckBridge', 'plugins')
+  await piServer.start(pluginDir)
+
+  // ── Hardware events ──────────────────────────────────────────────────────────
 
   deviceManager.on('keyDown', (e) => {
     const slot = profileManager.getSlot(e.deviceId, e.keyIndex)
@@ -69,38 +76,70 @@ async function main() {
     })
   })
 
-  pluginServer.on('pluginRegistered', (pluginUUID: string, type: string) => {
-    if (type !== 'plugin') return
-    console.log(`willAppear sturen voor plugin ${pluginUUID}`)
-    // stuur willAppear voor elke knop die aan deze plugin toebehoort
-    for (const { deviceId, keyIndex, slot } of profileManager.getAllSlots()) {
-      const uuid = pluginManager.getPluginUUID(slot.pluginId)
-      if (uuid !== pluginUUID) continue
+  // ── Plugin / PI registratie ──────────────────────────────────────────────────
+
+  pluginServer.on('pluginRegistered', (uuid: string, type: string) => {
+    if (type === 'plugin') {
+      // Stuur willAppear voor elke knop van deze plugin
+      for (const { deviceId, keyIndex, slot } of profileManager.getAllSlots()) {
+        if (pluginManager.getPluginUUID(slot.pluginId) !== uuid) continue
+        pluginServer.sendToPlugin(uuid, {
+          event: 'willAppear',
+          action: slot.actionId,
+          context: slot.context,
+          device: deviceId,
+          payload: {
+            settings: slot.settings,
+            coordinates: getCoords(deviceId, keyIndex, deviceManager),
+            state: 0,
+            isInMultiAction: false,
+          },
+        })
+      }
+    }
+
+    if (type === 'propertyInspector') {
+      // uuid = context van de knop waarvoor de PI opent
+      const loc = profileManager.getSlotByContext(uuid)
+      if (!loc) return
+      const pluginUUID = pluginManager.getPluginUUID(loc.slot.pluginId)
+      if (!pluginUUID) return
       pluginServer.sendToPlugin(pluginUUID, {
-        event: 'willAppear',
-        action: slot.actionId,
-        context: slot.context,
-        device: deviceId,
-        payload: {
-          settings: slot.settings,
-          coordinates: getCoords(deviceId, keyIndex, deviceManager),
-          state: 0,
-          isInMultiAction: false,
-        },
+        event: 'propertyInspectorDidAppear',
+        action: loc.slot.actionId,
+        context: uuid,
+        device: loc.deviceId,
       })
     }
   })
 
-  pluginServer.on('pluginMessage', async (pluginUUID: string, msg: Record<string, unknown>) => {
+  pluginServer.on('piClosed', (context: string) => {
+    const loc = profileManager.getSlotByContext(context)
+    if (!loc) return
+    const pluginUUID = pluginManager.getPluginUUID(loc.slot.pluginId)
+    if (!pluginUUID) return
+    pluginServer.sendToPlugin(pluginUUID, {
+      event: 'propertyInspectorDidDisappear',
+      action: loc.slot.actionId,
+      context,
+      device: loc.deviceId,
+    })
+  })
+
+  // ── Plugin / PI berichten ────────────────────────────────────────────────────
+
+  pluginServer.on('pluginMessage', async (senderUUID: string, senderType: string, msg: Record<string, unknown>) => {
     const context = msg.context as string | undefined
     const payload = (msg.payload ?? {}) as Record<string, unknown>
 
     switch (msg.event) {
+
+      // ── Display ──────────────────────────────────────────────────────────────
+
       case 'setTitle': {
         if (!context) break
         const loc = profileManager.getSlotByContext(context)
         if (!loc) break
-        console.log(`setTitle [knop ${loc.keyIndex}]: "${payload.title}"`)
         try {
           const size = deviceManager.getIconSize(loc.deviceId)
           const title = typeof payload.title === 'string' ? payload.title : ''
@@ -134,6 +173,8 @@ async function main() {
         break
       }
 
+      // ── Settings ─────────────────────────────────────────────────────────────
+
       case 'setSettings': {
         if (!context) break
         const loc = profileManager.getSlotByContext(context)
@@ -148,7 +189,7 @@ async function main() {
         if (!context) break
         const loc = profileManager.getSlotByContext(context)
         if (!loc) break
-        pluginServer.sendToPlugin(pluginUUID, {
+        pluginServer.sendToPlugin(senderUUID, {
           event: 'didReceiveSettings',
           action: loc.slot.actionId,
           context,
@@ -162,8 +203,8 @@ async function main() {
       }
 
       case 'setGlobalSettings': {
-        await pluginManager.setGlobalSettings(pluginUUID, payload)
-        pluginServer.sendToPlugin(pluginUUID, {
+        await pluginManager.setGlobalSettings(senderUUID, payload)
+        pluginServer.sendToPlugin(senderUUID, {
           event: 'didReceiveGlobalSettings',
           payload: { settings: payload },
         })
@@ -171,13 +212,45 @@ async function main() {
       }
 
       case 'getGlobalSettings': {
-        const settings = await pluginManager.getGlobalSettings(pluginUUID)
-        pluginServer.sendToPlugin(pluginUUID, {
+        const settings = await pluginManager.getGlobalSettings(senderUUID)
+        pluginServer.sendToPlugin(senderUUID, {
           event: 'didReceiveGlobalSettings',
           payload: { settings },
         })
         break
       }
+
+      // ── PI communicatie ───────────────────────────────────────────────────────
+
+      case 'sendToPropertyInspector': {
+        // plugin → PI
+        if (!context) break
+        pluginServer.sendToPropertyInspector(context, {
+          event: 'sendToPropertyInspector',
+          action: msg.action,
+          context,
+          payload,
+        })
+        break
+      }
+
+      case 'sendToPlugin': {
+        // PI → plugin
+        if (!context) break
+        const loc = profileManager.getSlotByContext(context)
+        if (!loc) break
+        const targetUUID = pluginManager.getPluginUUID(loc.slot.pluginId)
+        if (!targetUUID) break
+        pluginServer.sendToPlugin(targetUUID, {
+          event: 'sendToPlugin',
+          action: loc.slot.actionId,
+          context,
+          payload,
+        })
+        break
+      }
+
+      // ── Overig ───────────────────────────────────────────────────────────────
 
       case 'logMessage': {
         console.log(`[plugin log]`, payload.message)
@@ -192,11 +265,12 @@ async function main() {
       }
 
       default:
-        console.log(`[plugin ${pluginUUID}] onbekend event:`, msg.event, msg)
+        console.log(`[${senderType} ${senderUUID}] onbekend event:`, msg.event)
     }
   })
 
-  const pluginDir = join(homedir(), '.config', 'DeckBridge', 'plugins')
+  // ── Plugin laden ─────────────────────────────────────────────────────────────
+
   const deviceIds = deviceManager.getDeviceIds()
   const deviceInfo = {
     id: deviceIds[0] ?? 'deckbridge-xl-0',
@@ -207,12 +281,13 @@ async function main() {
 
   await pluginManager.loadPlugins(pluginDir, pluginServer.getPort(), deviceInfo)
 
-  console.log('DeckBridge running')
+  console.log(`DeckBridge running — WS:${pluginServer.getPort()} PI:${piServer.getPort()}`)
 
   process.on('SIGINT', async () => {
     pluginManager.stopAll()
     await deviceManager.stop()
     await pluginServer.stop()
+    await piServer.stop()
     process.exit(0)
   })
 }
