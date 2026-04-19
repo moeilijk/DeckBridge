@@ -1,6 +1,5 @@
 import { listStreamDecks, openStreamDeck } from '@elgato-stream-deck/node'
 import type { StreamDeck } from '@elgato-stream-deck/node'
-import type { StreamDeckButtonControlDefinition } from '@elgato-stream-deck/node'
 import { EventEmitter } from 'events'
 
 export interface ButtonEvent {
@@ -37,11 +36,13 @@ export class DeviceManager extends EventEmitter {
     const deck = await openStreamDeck(path)
     const id = path
 
-    deck.on('down', (control: StreamDeckButtonControlDefinition) => {
+    deck.on('down', (control) => {
+      if (control.type !== 'button') return
       this.emit('keyDown', { deviceId: id, keyIndex: control.index } satisfies ButtonEvent)
     })
 
-    deck.on('up', (control: StreamDeckButtonControlDefinition) => {
+    deck.on('up', (control) => {
+      if (control.type !== 'button') return
       this.emit('keyUp', { deviceId: id, keyIndex: control.index } satisfies ButtonEvent)
     })
 
@@ -91,7 +92,10 @@ export class DeviceManager extends EventEmitter {
   }
 
   getColumns(deviceId: string): number {
-    return this.devices.get(deviceId)?.KEY_COLUMNS ?? 8
+    const deck = this.devices.get(deviceId)
+    if (!deck) return 8
+    const buttonControls = deck.CONTROLS.filter(c => c.type === 'button')
+    return buttonControls.reduce((max, c) => Math.max(max, c.column + 1), 1)
   }
 
   getIconSize(deviceId: string): number {

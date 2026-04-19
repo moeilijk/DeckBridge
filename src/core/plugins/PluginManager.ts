@@ -1,6 +1,7 @@
-import { readdir, readFile } from 'fs/promises'
+import { readdir, readFile, writeFile, mkdir } from 'fs/promises'
 import { existsSync } from 'fs'
 import { join } from 'path'
+import { homedir } from 'os'
 import { spawn, ChildProcess } from 'child_process'
 import { randomUUID } from 'crypto'
 
@@ -22,6 +23,8 @@ interface PluginInstance {
 
 export class PluginManager {
   private instances = new Map<string, PluginInstance>()
+  private globalSettings = new Map<string, Record<string, unknown>>()
+  private settingsDir = join(homedir(), '.config', 'DeckBridge', 'settings')
 
   async loadPlugins(pluginDir: string, wsPort: number, deviceInfo: object): Promise<void> {
     if (!existsSync(pluginDir)) {
@@ -72,7 +75,7 @@ export class PluginManager {
 
       this.spawnPlugin(manifest.UUID, pluginUUID, pluginDir, 'node', [entryPoint, ...args])
     } else {
-      const codePath = manifest.CodePath
+      const codePath = manifest.CodePathWin ?? manifest.CodePath
       if (!codePath) return
 
       const exePath = join(pluginDir, codePath)
@@ -81,12 +84,29 @@ export class PluginManager {
         return
       }
 
-      this.spawnPlugin(manifest.UUID, pluginUUID, pluginDir, 'wine', [exePath, ...args])
+      const winePrefix = join(homedir(), '.config', 'DeckBridge', 'wine', manifest.UUID)
+      await mkdir(winePrefix, { recursive: true })
+
+      this.spawnPlugin(manifest.UUID, pluginUUID, pluginDir, 'wine', [exePath, ...args], {
+        WINEPREFIX: winePrefix,
+        WINEDEBUG: '-all',
+      })
     }
   }
 
-  private spawnPlugin(uuid: string, pluginUUID: string, pluginDir: string, cmd: string, args: string[]): void {
-    const proc = spawn(cmd, args, { cwd: pluginDir, stdio: 'pipe' })
+  private spawnPlugin(
+    uuid: string,
+    pluginUUID: string,
+    pluginDir: string,
+    cmd: string,
+    args: string[],
+    extraEnv: Record<string, string> = {},
+  ): void {
+    const proc = spawn(cmd, args, {
+      cwd: pluginDir,
+      stdio: 'pipe',
+      env: { ...process.env, ...extraEnv },
+    })
 
     proc.stdout?.on('data', (d) => process.stdout.write(`[${uuid}] ${d}`))
     proc.stderr?.on('data', (d) => process.stderr.write(`[${uuid}] ${d}`))
@@ -103,6 +123,34 @@ export class PluginManager {
     for (const instance of this.instances.values()) {
       if (instance.uuid === pluginId) return instance.pluginUUID
     }
+  }
+
+  // pluginUUID hier = de random UUID van de WebSocket verbinding
+  async getGlobalSettings(pluginUUID: string): Promise<Record<string, unknown>> {
+    if (this.globalSettings.has(pluginUUID)) {
+      return this.globalSettings.get(pluginUUID)!
+    }
+    // Zoek de manifest UUID op basis van pluginUUID
+    const instance = this.instances.get(pluginUUID)
+    if (!instance) return {}
+
+    const path = join(this.settingsDir, `${instance.uuid}.json`)
+    try {
+      const raw = await readFile(path, 'utf8')
+      const settings = JSON.parse(raw)
+      this.globalSettings.set(pluginUUID, settings)
+      return settings
+    } catch {
+      return {}
+    }
+  }
+
+  async setGlobalSettings(pluginUUID: string, settings: Record<string, unknown>): Promise<void> {
+    this.globalSettings.set(pluginUUID, settings)
+    const instance = this.instances.get(pluginUUID)
+    if (!instance) return
+    await mkdir(this.settingsDir, { recursive: true })
+    await writeFile(join(this.settingsDir, `${instance.uuid}.json`), JSON.stringify(settings, null, 2))
   }
 
   stopAll(): void {

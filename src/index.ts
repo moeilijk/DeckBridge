@@ -162,15 +162,19 @@ async function main() {
       }
 
       case 'setGlobalSettings': {
-        // TODO: per-plugin global settings persistentie
-        console.log(`setGlobalSettings [${pluginUUID}]:`, payload)
+        await pluginManager.setGlobalSettings(pluginUUID, payload)
+        pluginServer.sendToPlugin(pluginUUID, {
+          event: 'didReceiveGlobalSettings',
+          payload: { settings: payload },
+        })
         break
       }
 
       case 'getGlobalSettings': {
+        const settings = await pluginManager.getGlobalSettings(pluginUUID)
         pluginServer.sendToPlugin(pluginUUID, {
           event: 'didReceiveGlobalSettings',
-          payload: { settings: {} },
+          payload: { settings },
         })
         break
       }
