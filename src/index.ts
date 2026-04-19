@@ -42,38 +42,44 @@ async function main() {
 
   const SYSTEM_PLUGIN = 'com.deckbridge.system'
   const ACTION_NEXT_PAGE = 'com.deckbridge.system.nextpage'
+  const ACTION_PREV_PAGE = 'com.deckbridge.system.prevpage'
 
   await deviceManager.start()
   await deviceManager.clearAll()
   await profileManager.load()
 
-  // Ensure every page has a nextpage button; add to last key if missing
+  // Ensure every page has both nav buttons (prevpage + nextpage)
   let profileDirty = false
   const primaryId = deviceManager.getDeviceIds()[0] ?? 'deckbridge-xl-0'
-  const keysPerPage = (deviceManager.getDeviceIds()[0]
+  const keysPerPage = deviceManager.getDeviceIds()[0]
     ? deviceManager.getColumns(deviceManager.getDeviceIds()[0]) * (deviceManager.getRows?.(deviceManager.getDeviceIds()[0]) ?? 4)
-    : 32)
-  const lastKey = keysPerPage - 1
-  for (let pi = 0; pi < profileManager.getPageCount(); pi++) {
+    : 32
+  const navSlots: Array<{ key: number; actionId: string }> = [
+    { key: keysPerPage - 1, actionId: ACTION_NEXT_PAGE },
+    { key: keysPerPage - 2, actionId: ACTION_PREV_PAGE },
+  ]
+
+  function ensureNavButton(pageIndex: number, key: number, actionId: string): boolean {
     const savedPage = profileManager.getActivePage()
-    profileManager.switchPage(pi)
-    const hasNav = profileManager.getAllSlots().some(s => s.slot.pluginId === SYSTEM_PLUGIN && s.slot.actionId === ACTION_NEXT_PAGE)
-    if (!hasNav) {
-      // Find last non-system slot and use the last key, bumping it if occupied
-      const existing = profileManager.getSlot(primaryId, lastKey)
+    profileManager.switchPage(pageIndex)
+    const has = profileManager.getAllSlots().some(s => s.slot.actionId === actionId && s.slot.pluginId === SYSTEM_PLUGIN)
+    if (!has) {
+      const existing = profileManager.getSlot(primaryId, key)
       if (existing && existing.pluginId !== SYSTEM_PLUGIN) {
-        // Move existing to first free key
-        for (let k = lastKey - 1; k >= 0; k--) {
-          if (!profileManager.getSlot(primaryId, k)) {
-            profileManager.moveSlot(primaryId, lastKey, primaryId, k)
-            break
-          }
+        for (let k = key - 2; k >= 0; k--) {
+          if (!profileManager.getSlot(primaryId, k)) { profileManager.moveSlot(primaryId, key, primaryId, k); break }
         }
       }
-      profileManager.createSlot(primaryId, lastKey, SYSTEM_PLUGIN, ACTION_NEXT_PAGE)
-      profileDirty = true
+      if (!profileManager.getSlot(primaryId, key)) profileManager.createSlot(primaryId, key, SYSTEM_PLUGIN, actionId)
     }
     profileManager.switchPage(savedPage)
+    return !has
+  }
+
+  for (let pi = 0; pi < profileManager.getPageCount(); pi++) {
+    for (const { key, actionId } of navSlots) {
+      if (ensureNavButton(pi, key, actionId)) profileDirty = true
+    }
   }
   if (profileDirty) await profileManager.save()
   await pluginServer.start()
@@ -99,12 +105,17 @@ async function main() {
 
   async function renderSystemSlot(deviceId: string, keyIndex: number, actionId: string): Promise<void> {
     const size = deviceManager.getIconSize(deviceId)
-    const pageCount = profileManager.getPageCount()
     const activePage = profileManager.getActivePage()
-    const label = actionId === ACTION_NEXT_PAGE
-      ? (pageCount > 1 ? `${activePage + 1}/${pageCount}\n►` : '►')
-      : '?'
-    const rgb = await renderTitle(size, label, { fontSize: 14, titleAlignment: 'middle', titleColor: '#aaaaaa' })
+    const pageCount = profileManager.getPageCount()
+    let label: string | null = null
+    if (actionId === ACTION_NEXT_PAGE && activePage < pageCount - 1) label = '►'
+    if (actionId === ACTION_PREV_PAGE && activePage > 0) label = '◄'
+    if (label === null) {
+      // Not applicable for this page position — render black
+      await deviceManager.setKeyColor(deviceId, keyIndex, 0, 0, 0)
+      return
+    }
+    const rgb = await renderTitle(size, label, { fontSize: 20, titleAlignment: 'middle', titleColor: '#888888' })
     await deviceManager.setImage(deviceId, keyIndex, rgb)
   }
 
@@ -173,9 +184,13 @@ async function main() {
     if (!slot) return
     // System actions handled internally
     if (slot.pluginId === SYSTEM_PLUGIN) {
-      if (slot.actionId === ACTION_NEXT_PAGE) {
-        const next = (profileManager.getActivePage() + 1) % profileManager.getPageCount()
-        const result = profileManager.switchPage(next)
+      const activePage = profileManager.getActivePage()
+      const pageCount = profileManager.getPageCount()
+      let targetPage = -1
+      if (slot.actionId === ACTION_NEXT_PAGE && activePage < pageCount - 1) targetPage = activePage + 1
+      if (slot.actionId === ACTION_PREV_PAGE && activePage > 0) targetPage = activePage - 1
+      if (targetPage >= 0) {
+        const result = profileManager.switchPage(targetPage)
         if (result) {
           for (const s of result.oldSlots) sendWillDisappear(s.deviceId, s.keyIndex, s.slot)
           keyImages.clear()
@@ -279,7 +294,7 @@ async function main() {
       case 'setTitle': {
         if (!context) break
         const loc = profileManager.getSlotByContext(context)
-        if (!loc) break
+        if (!loc || loc.pageIndex !== profileManager.getActivePage()) break
         try {
           const size = deviceManager.getIconSize(loc.deviceId)
           const title = typeof payload.title === 'string' ? payload.title : ''
@@ -303,7 +318,7 @@ async function main() {
       case 'setImage': {
         if (!context || typeof payload.image !== 'string') break
         const loc = profileManager.getSlotByContext(context)
-        if (!loc) break
+        if (!loc || loc.pageIndex !== profileManager.getActivePage()) break
         try {
           if (!loggedSetImageContexts.has(context)) {
             console.log(`setImage: key ${loc.keyIndex} ${loc.slot.actionId} (${payload.image.length} chars)`)
@@ -545,6 +560,16 @@ async function main() {
 
     addPage: async () => {
       const newIndex = profileManager.addPage()
+      for (const { key, actionId } of navSlots) ensureNavButton(newIndex, key, actionId)
+      // Re-render nextpage on the previously-last page (now it has a next)
+      const prevLast = newIndex - 1
+      if (prevLast >= 0) {
+        const savedPage = profileManager.getActivePage()
+        profileManager.switchPage(prevLast)
+        const nextSlot = profileManager.getAllSlots().find(s => s.slot.actionId === ACTION_NEXT_PAGE)
+        if (nextSlot) await renderSystemSlot(nextSlot.deviceId, nextSlot.keyIndex, ACTION_NEXT_PAGE)
+        profileManager.switchPage(savedPage)
+      }
       await profileManager.save()
       return newIndex
     },
