@@ -4,7 +4,9 @@ Drop-in vervanging voor de Elgato Stream Deck software op Linux. Zo compatibel m
 
 ## Status
 
-Vroege ontwikkeling. Fase 1: Stream Deck XL hardware + knopfunctionaliteit.
+Vroege ontwikkeling. Stream Deck XL hardware, plugin runtime, Electron shell en
+een eerste visuele profiel editor werken. Zie [docs/roadmap.md](docs/roadmap.md)
+voor de actuele status.
 
 ## Vereisten
 
@@ -72,7 +74,8 @@ Zie [docs/architecture.md](docs/architecture.md) voor de volledige architectuurb
 
 ## Roadmap
 
-Zie [docs/roadmap.md](docs/roadmap.md) voor de geplande fases.
+Zie [docs/roadmap.md](docs/roadmap.md) voor de actuele roadmap en
+[docs/planning.md](docs/planning.md) voor de uitgewerkte backlog en volgorde.
 
 ## Hergebruikte Libraries
 

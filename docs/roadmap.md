@@ -1,66 +1,112 @@
 # DeckBridge — Roadmap
 
-## Fase 1 — Hardware & Knoppen (huidige focus)
+Deze roadmap is de korte statuslijst. Gebruik [planning.md](planning.md) voor de
+uitgewerkte backlog, prioriteiten en acceptatiecriteria.
 
-Doel: Stream Deck XL detecteren, knoppen werken, basis plugin communicatie.
+## Huidige status
 
-- [x] DeviceManager: detecteer Stream Deck XL via `@elgato-stream-deck/node`
-- [x] DeviceManager: verwerk button keyDown / keyUp events
-- [x] DeviceManager: stuur afbeelding naar specifieke knop (setImage)
-- [x] DeviceManager: helderheid instellen
-- [x] PluginServer: WebSocket server opstarten op dynamische poort
-- [x] PluginServer: plugin registratie via `registerPlugin` event
-- [x] PluginServer: basis event routing op UUID
-- [x] PluginServer: `setTitle`, `setImage`, `showAlert`, `showOk` verwerken
-- [x] PluginServer: `keyDown` / `keyUp` doorsturen naar juiste plugin
-- [x] PluginManager: `manifest.json` lezen en parsen
-- [x] PluginManager: Node.js plugins spawnen met de 4 CLI argumenten
-- [x] udev setup script voor Linux hardware toegang
-- [x] Handmatige test met een eenvoudige open-source plugin
+DeckBridge heeft nu een werkende core daemon, Electron shell, lokale dashboard UI
+en eerste Stream Deck-achtige profiel editor.
 
-## Fase 2 — Plugin Ecosystem
+Werkend:
 
-Doel: De meeste SDK-compatibele plugins draaien zonder aanpassingen.
+- Stream Deck XL detectie en HID button events.
+- `setImage` en `setTitle` rendering naar fysieke knoppen.
+- Plugin WebSocket server met UUID-routing.
+- Plugin manifest parsing en action library.
+- Node.js plugins starten.
+- `.exe` plugins starten via Wine.
+- LHM plugin basisflow met Property Inspector, settings en live readings.
+- Property Inspector HTML serveren via lokale HTTP server.
+- Property Inspector bootstrap injectie voor browser/Electron gebruik.
+- `getSettings`, `setSettings`, `getGlobalSettings`, `setGlobalSettings`.
+- `openUrl` via systeembrowser.
+- Electron desktopvenster rond de lokale dashboard UI.
+- Visuele profiel editor:
+  - acties naar tegels slepen;
+  - tegels verwijderen via contextmenu;
+  - klik op tegel opent Property Inspector;
+  - tegels onderling wisselen of verplaatsen;
+  - zwevende tegel-preview tijdens slepen;
+  - live preview van dezelfde afbeelding die naar het apparaat gaat.
 
-- [x] Property Inspector: HTML serveren via lokale HTTP server
-- [x] Property Inspector: `connectElgatoStreamDeckSocket` injectie in PI webview
-- [ ] `getSettings` / `setSettings` / `getGlobalSettings` / `setGlobalSettings`
-- [ ] `switchToProfile` — ProfileManager implementatie
-- [ ] `applicationDidLaunch` / `Terminate` via `/proc` polling op Linux
-- [ ] `systemDidWakeUp` event
-- [ ] `openUrl` — systeembrowser openen
-- [ ] `logMessage` — plugin logging naar bestand
-- [ ] .exe plugins via Wine (geïsoleerde WINEPREFIX per plugin)
-- [ ] Multi-device ondersteuning (meerdere Stream Decks tegelijk)
-- [ ] `deviceDidConnect` / `Disconnect` events
+## Prioriteit 1 — Stabiliseren
 
-## Fase 3 — UI & Gebruiksvriendelijkheid
+Doel: de huidige functionaliteit betrouwbaar genoeg maken om dagelijks te
+gebruiken.
 
-Doel: Configuratie UI zodat gebruikers zonder terminal kunnen werken.
+- [ ] Schone standaardprofielen: geen 32 testtegels als default.
+- [ ] Test/profiel seed data scheiden van echte gebruikerprofielen.
+- [ ] Profielmutatie-tests: assign, clear, move, swap.
+- [ ] UI-fouten zichtbaar tonen in plaats van alleen console/log.
+- [ ] Laatste dashboard URL en daemon status duidelijk tonen in Electron.
+- [ ] Roadmap en faseplannen blijven synchroniseren met werkelijke status.
 
-- [x] Electron shell met desktopvenster
-- [ ] System tray icoon
-- [x] Lokale web-gebaseerde configuratie UI via DeckBridge daemon
-- [ ] Web-gebaseerde configuratie UI (Svelte)
-- [ ] Plugin installatie via drag-and-drop van .streamDeckPlugin bestanden
-- [x] Visuele profiel editor (acties naar knoppen slepen/toewijzen/verwijderen)
-- [x] Apparaat preview (live weergave van knopindeling)
-- [ ] Automatische udev installatie via setup wizard
-- [ ] Autostart bij login (systemd user service of XDG autostart)
+## Prioriteit 2 — Profiel editor uitbreiden
 
-## Fase 4 — Geavanceerd
+Doel: de editor dichter bij Stream Deck software brengen.
 
-- [ ] `setFeedback` / `setFeedbackLayout` voor Stream Deck + (encoders + touchscreen)
-- [ ] `dialDown` / `dialUp` / `dialRotate` events (Stream Deck +)
-- [ ] `touchTap` events (Stream Deck +)
-- [ ] Deep links (`streamdeck://` protocol registratie)
-- [ ] `didReceiveResources` / `setResources` (SDK v7.1+)
-- [ ] Chromium remote devtools voor PI debugging (poort 23654)
-- [ ] Plugin marketplace browser (open-source plugins)
-- [ ] Automatische updates
+- [ ] Rechtsklik-menu: `Copy`.
+- [ ] Rechtsklik-menu: `Paste`.
+- [ ] Rechtsklik-menu: `Duplicate`.
+- [ ] Rechtsklik-menu: `Clear`.
+- [ ] Undo/redo voor profielwijzigingen.
+- [ ] Insert/shift-drag: slepen tussen tegels schuift de rest op.
+- [ ] Meerdere pages/profielen beheren in de UI.
+- [ ] Folders: tegel opent sub-grid.
+- [ ] Default action icon naar apparaat renderen voor acties die zelf geen image
+  sturen.
 
-## Bekende Beperkingen (permanent)
+## Prioriteit 3 — Plugin compatibiliteit
 
-- **DRM-beveiligde marketplace plugins werken niet** — Elgato's key-infrastructure is vereist. Dit is dezelfde beperking als OpenDeck.
-- **`platform` field is altijd `"mac"`** — officiële SDK kent geen `"linux"`.
-- **Wine vereist voor .exe plugins** — geen Windows-native binaries op Linux zonder Wine.
+Doel: meer bestaande Stream Deck plugins zonder aanpassingen laten werken.
+
+- [ ] `switchToProfile` volledig testen en afronden.
+- [ ] `showAlert` en `showOk` visueel correct renderen.
+- [ ] `logMessage` naar plugin/core logbestand.
+- [ ] `applicationDidLaunch` en `applicationDidTerminate` via Linux process
+  monitoring.
+- [ ] `systemDidWakeUp`.
+- [ ] `deviceDidConnect` en `deviceDidDisconnect`.
+- [ ] Per-plugin Wine prefix in plaats van globale Wine omgeving.
+- [ ] Plugin resource paths en icon fallback robuuster maken.
+
+## Prioriteit 4 — Desktop app
+
+Doel: DeckBridge als normale desktop-app gebruiken.
+
+- [ ] System tray icoon.
+- [ ] Autostart bij login.
+- [ ] Setup wizard voor udev-regels.
+- [ ] Packaging met `electron-builder` of vergelijkbaar.
+- [ ] Daemon als systemd user service kunnen draaien.
+- [ ] Electron alleen als UI kunnen openen tegen een bestaande daemon.
+
+## Prioriteit 5 — Installatie en ecosysteem
+
+Doel: plugins en apparaten makkelijker beheren.
+
+- [ ] Plugin installatie via drag-and-drop van `.streamDeckPlugin` bestanden.
+- [ ] Plugin verwijderen/uitschakelen vanuit UI.
+- [ ] Multi-device ondersteuning voor meerdere Stream Decks tegelijk.
+- [ ] Profiel export/import.
+- [ ] Backups van profielwijzigingen.
+- [ ] Open-source plugin browser.
+
+## Later
+
+- [ ] `setFeedback` en `setFeedbackLayout` voor Stream Deck +.
+- [ ] `dialDown`, `dialUp`, `dialRotate`.
+- [ ] `touchTap`.
+- [ ] Deep links via `streamdeck://`.
+- [ ] `didReceiveResources` en `setResources` voor nieuwere SDK-versies.
+- [ ] Chromium remote devtools voor PI debugging.
+- [ ] Automatische updates.
+
+## Permanente beperkingen
+
+- DRM-beveiligde marketplace plugins werken niet. Elgato's key-infrastructure is
+  niet beschikbaar; dit is dezelfde klasse beperking als bij OpenDeck.
+- Het SDK `platform` veld blijft voorlopig `"mac"`, omdat de officiële SDK geen
+  `"linux"` waarde kent.
+- Wine blijft nodig voor Windows `.exe` plugins.

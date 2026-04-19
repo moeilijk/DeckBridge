@@ -148,7 +148,8 @@ DeckBridge/
 ├── docs/
 │   ├── research.md                     # Research bevindingen
 │   ├── architecture.md                 # Dit bestand
-│   └── roadmap.md                      # Fases en planning
+│   ├── roadmap.md                      # Korte status en roadmap
+│   └── planning.md                     # Uitgewerkte backlog
 ├── package.json
 ├── tsconfig.json
 ├── .gitignore
