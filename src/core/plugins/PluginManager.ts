@@ -5,13 +5,29 @@ import { homedir } from 'os'
 import { spawn, ChildProcess } from 'child_process'
 import { randomUUID } from 'crypto'
 
+interface ManifestAction {
+  UUID: string
+  PropertyInspectorPath?: string
+}
+
 interface Manifest {
   UUID: string
   Version: string
+  SDKVersion?: number
   Nodejs?: { Version: string }
   CodePath?: string
   CodePathMac?: string
   CodePathWin?: string
+  PropertyInspectorPath?: string  // globale fallback PI
+  Actions?: ManifestAction[]
+}
+
+// Publieke plugin metadata die andere componenten kunnen opvragen
+export interface PluginInfo {
+  pluginId: string       // manifest UUID
+  pluginDir: string
+  defaultPiPath: string  // fallback PropertyInspectorPath
+  actions: Map<string, string>  // actionId → PropertyInspectorPath
 }
 
 interface PluginInstance {
@@ -23,6 +39,7 @@ interface PluginInstance {
 
 export class PluginManager {
   private instances = new Map<string, PluginInstance>()
+  private pluginInfo = new Map<string, PluginInfo>()   // pluginId → info
   private globalSettings = new Map<string, Record<string, unknown>>()
   private settingsDir = join(homedir(), '.config', 'DeckBridge', 'settings')
 
@@ -52,6 +69,19 @@ export class PluginManager {
       console.error(`Kon manifest niet lezen: ${manifestPath}`)
       return
     }
+
+    // Sla PI-paden op per actie zodat de host de juiste PI kan openen
+    const actionPiMap = new Map<string, string>()
+    for (const action of manifest.Actions ?? []) {
+      const piPath = action.PropertyInspectorPath ?? manifest.PropertyInspectorPath ?? 'index_pi.html'
+      actionPiMap.set(action.UUID, piPath)
+    }
+    this.pluginInfo.set(manifest.UUID, {
+      pluginId: manifest.UUID,
+      pluginDir,
+      defaultPiPath: manifest.PropertyInspectorPath ?? 'index_pi.html',
+      actions: actionPiMap,
+    })
 
     const pluginUUID = randomUUID()
     const infoJson = JSON.stringify({
@@ -117,6 +147,15 @@ export class PluginManager {
 
     this.instances.set(pluginUUID, { uuid, pluginUUID, process: proc, pluginDir })
     console.log(`Plugin gestart: ${uuid} via ${cmd}`)
+  }
+
+  getPluginInfo(pluginId: string): PluginInfo | undefined {
+    return this.pluginInfo.get(pluginId)
+  }
+
+  getPiPath(pluginId: string, actionId: string): string {
+    const info = this.pluginInfo.get(pluginId)
+    return info?.actions.get(actionId) ?? info?.defaultPiPath ?? 'index_pi.html'
   }
 
   getPluginUUID(pluginId: string): string | undefined {
