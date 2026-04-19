@@ -405,14 +405,14 @@ async function main() {
   piServer.setPrimaryDeviceProvider(() => deviceManager.getDeviceIds()[0] ?? primaryDeviceId)
   piServer.setLayoutProvider(() => ({ columns: cols, rows, totalKeys }))
   piServer.setSlotMutationHandlers({
-    assign: async ({ deviceId, keyIndex, pluginId, actionId }) => {
+    assign: async ({ deviceId, keyIndex, pluginId, actionId, settings }) => {
       const existing = profileManager.getSlot(deviceId, keyIndex)
       if (existing?.pluginId === pluginId && existing.actionId === actionId) return
       if (existing) sendWillDisappear(deviceId, keyIndex, existing)
       clearKeyImage(deviceId, keyIndex)
       await deviceManager.setKeyColor(deviceId, keyIndex, 0, 0, 0)
 
-      const slot = profileManager.createSlot(deviceId, keyIndex, pluginId, actionId)
+      const slot = profileManager.createSlot(deviceId, keyIndex, pluginId, actionId, settings)
       await profileManager.save()
       sendWillAppear(deviceId, keyIndex, slot)
     },

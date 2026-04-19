@@ -39,12 +39,12 @@ Waarom: copy/paste/duplicate zijn essentieel om veel tegels snel te beheren.
 
 Taken:
 
-- `Copy` in contextmenu.
-- `Paste` in contextmenu.
-- `Duplicate` in contextmenu.
+- [x] `Copy` in contextmenu.
+- [x] `Paste` in contextmenu.
+- [x] `Duplicate` in contextmenu (naar eerste lege tegel).
 - `Clear` als expliciet menu-item naast remove.
-- Clipboard-state zichtbaar maken in disabled/enabled menu states.
-- Beslissen of paste context behoudt of nieuwe context maakt.
+- [x] Clipboard-state zichtbaar maken in disabled/enabled menu states.
+- [x] Beslissen of paste context behoudt of nieuwe context maakt.
 
 Voorlopige beslissing:
 

@@ -50,6 +50,7 @@ export interface SlotAssignment {
   keyIndex: number
   pluginId: string
   actionId: string
+  settings?: Record<string, unknown>
 }
 
 export interface SlotMove {
@@ -364,7 +365,8 @@ export class PropertyInspectorServer {
     if (!pluginId) throw new Error('Missing pluginId')
     if (!actionId) throw new Error('Missing actionId')
 
-    return { deviceId, keyIndex, pluginId, actionId }
+    const settings = isRecord(body.settings) ? body.settings as Record<string, unknown> : undefined
+    return { deviceId, keyIndex, pluginId, actionId, settings }
   }
 
   private parseSlotMove(body: unknown): SlotMove {
@@ -890,6 +892,11 @@ export class PropertyInspectorServer {
 
   <div class="context-menu" id="tileMenu" role="menu" aria-hidden="true">
     <button id="menuOpenPiBtn" type="button">Open Property Inspector</button>
+    <hr style="margin:4px 0;border-color:#3a3a3a">
+    <button id="menuCopyBtn" type="button">Copy</button>
+    <button id="menuPasteBtn" type="button">Paste</button>
+    <button id="menuDuplicateBtn" type="button">Duplicate</button>
+    <hr style="margin:4px 0;border-color:#3a3a3a">
     <button class="danger-command" id="menuRemoveBtn" type="button">Remove Tile</button>
   </div>
 
@@ -902,6 +909,7 @@ export class PropertyInspectorServer {
     var contextMenuKeyIndex = null;
     var draggingActionKey = null;
     var draggingSlot = null;
+    var clipboard = null; // { pluginId, actionId, settings }
     var pointerTileDrag = null;
     var suppressTileClickUntil = 0;
     var searchValue = "";
@@ -1471,6 +1479,9 @@ export class PropertyInspectorServer {
       menu.classList.add("open");
       menu.setAttribute("aria-hidden", "false");
       byId("menuOpenPiBtn").disabled = !slot.piUrl;
+      byId("menuCopyBtn").disabled = false;
+      byId("menuPasteBtn").disabled = !clipboard;
+      byId("menuDuplicateBtn").disabled = false;
       byId("menuRemoveBtn").disabled = false;
 
       var left = event.clientX;
@@ -1505,6 +1516,56 @@ export class PropertyInspectorServer {
       openSelectedPI();
     }
 
+    function copyContextMenuTile() {
+      if (contextMenuKeyIndex === null) return;
+      var slot = slotForKey(contextMenuKeyIndex);
+      if (!slot) return;
+      clipboard = { pluginId: slot.pluginId, actionId: slot.actionId, settings: slot.settings || {} };
+      closeTileMenu();
+    }
+
+    async function pasteContextMenuTile() {
+      if (contextMenuKeyIndex === null || !clipboard) return;
+      var keyIndex = contextMenuKeyIndex;
+      closeTileMenu();
+      var deviceId = state && state.primaryDeviceId;
+      if (!deviceId) return;
+      var res = await fetch("/api/slots", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ deviceId, keyIndex, pluginId: clipboard.pluginId, actionId: clipboard.actionId, settings: clipboard.settings }),
+      });
+      if (res.ok) await loadState();
+    }
+
+    async function duplicateContextMenuTile() {
+      if (contextMenuKeyIndex === null) return;
+      var slot = slotForKey(contextMenuKeyIndex);
+      if (!slot) return;
+      clipboard = { pluginId: slot.pluginId, actionId: slot.actionId, settings: slot.settings || {} };
+      closeTileMenu();
+      // Find first empty key
+      var layout = state && state.layout;
+      var total = layout ? layout.columns * layout.rows : 32;
+      for (var i = 0; i < total; i++) {
+        if (!slotForKey(i)) {
+          var deviceId = state && state.primaryDeviceId;
+          if (!deviceId) return;
+          var res = await fetch("/api/slots", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ deviceId, keyIndex: i, pluginId: clipboard.pluginId, actionId: clipboard.actionId, settings: clipboard.settings }),
+          });
+          if (res.ok) {
+            await loadState();
+            selectedKeyIndex = i;
+            renderDeck();
+          }
+          return;
+        }
+      }
+    }
+
     function openSelectedPI() {
       var slot = selectedSlot();
       if (!slot || !slot.piUrl) return;
@@ -1527,6 +1588,9 @@ export class PropertyInspectorServer {
     byId("openPiBtn").addEventListener("click", openSelectedPI);
     byId("closePiBtn").addEventListener("click", closePI);
     byId("menuOpenPiBtn").addEventListener("click", openContextMenuPI);
+    byId("menuCopyBtn").addEventListener("click", copyContextMenuTile);
+    byId("menuPasteBtn").addEventListener("click", pasteContextMenuTile);
+    byId("menuDuplicateBtn").addEventListener("click", duplicateContextMenuTile);
     byId("menuRemoveBtn").addEventListener("click", removeContextMenuTile);
     byId("tileMenu").addEventListener("click", function(event) {
       event.stopPropagation();
