@@ -106,6 +106,9 @@ export class PropertyInspectorServer {
   private assignSlotHandler: ((assignment: SlotAssignment) => Promise<void> | void) | null = null
   private clearSlotHandler: ((deviceId: string, keyIndex: number) => Promise<void> | void) | null = null
   private moveSlotHandler: ((move: SlotMove) => Promise<void> | void) | null = null
+  private switchPageHandler: ((pageIndex: number) => Promise<void> | void) | null = null
+  private addPageHandler: (() => Promise<number> | number) | null = null
+  private pageProvider: (() => { activePage: number; pageCount: number }) | null = null
 
   setSlotProvider(fn: () => SlotEntry[]): void {
     this.slotProvider = fn
@@ -127,10 +130,18 @@ export class PropertyInspectorServer {
     assign: (assignment: SlotAssignment) => Promise<void> | void
     clear: (deviceId: string, keyIndex: number) => Promise<void> | void
     move?: (move: SlotMove) => Promise<void> | void
+    switchPage?: (pageIndex: number) => Promise<void> | void
+    addPage?: () => Promise<number> | number
   }): void {
     this.assignSlotHandler = handlers.assign
     this.clearSlotHandler = handlers.clear
     this.moveSlotHandler = handlers.move ?? null
+    this.switchPageHandler = handlers.switchPage ?? null
+    this.addPageHandler = handlers.addPage ?? null
+  }
+
+  setPageProvider(fn: () => { activePage: number; pageCount: number }): void {
+    this.pageProvider = fn
   }
 
   async start(pluginBaseDir: string): Promise<void> {
@@ -220,6 +231,16 @@ export class PropertyInspectorServer {
       return
     }
 
+    if (url.pathname === '/api/pages/switch' && req.method === 'POST') {
+      await this.handleSwitchPage(req, res, url)
+      return
+    }
+
+    if (url.pathname === '/api/pages/add' && req.method === 'POST') {
+      await this.handleAddPage(res, url)
+      return
+    }
+
     if (url.pathname.startsWith('/api/')) {
       res.writeHead(404)
       res.end('Not Found')
@@ -286,15 +307,36 @@ export class PropertyInspectorServer {
     const layout = this.layoutProvider?.() ?? { columns: 8, rows: 4, totalKeys: 32 }
     const primaryDeviceId = this.primaryDeviceProvider?.() ?? null
 
+    const pages = this.pageProvider?.() ?? { activePage: 0, pageCount: 1 }
+
     return {
       primaryDeviceId,
       layout,
       actions,
+      activePage: pages.activePage,
+      pageCount: pages.pageCount,
       slots: slots.map((slot) => ({
         ...slot,
         piUrl: wsPort ? this.getUrl(slot, slot.piFile, wsPort) : '',
       })),
     }
+  }
+
+  private async handleSwitchPage(req: IncomingMessage, res: ServerResponse, url: URL): Promise<void> {
+    if (!this.switchPageHandler) { this.sendJson(res, 501, { error: 'Not configured' }); return }
+    const body = await this.readJson(req)
+    const pageIndex = typeof (body as Record<string, unknown>).pageIndex === 'number'
+      ? (body as Record<string, unknown>).pageIndex as number
+      : -1
+    if (pageIndex < 0) { this.sendJson(res, 400, { error: 'Invalid pageIndex' }); return }
+    await this.switchPageHandler(pageIndex)
+    this.sendJson(res, 200, this.getState(url))
+  }
+
+  private async handleAddPage(res: ServerResponse, url: URL): Promise<void> {
+    if (!this.addPageHandler) { this.sendJson(res, 501, { error: 'Not configured' }); return }
+    await this.addPageHandler()
+    this.sendJson(res, 200, this.getState(url))
   }
 
   private async assignSlot(req: IncomingMessage, res: ServerResponse, url: URL): Promise<void> {
@@ -601,8 +643,40 @@ export class PropertyInspectorServer {
       min-height: 0;
       display: grid;
       place-items: center;
-      padding: 28px;
+      padding: 28px 28px 12px;
     }
+    .page-bar {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+      padding: 0 28px 16px;
+    }
+    .page-tabs {
+      display: flex;
+      gap: 4px;
+    }
+    .page-tab {
+      padding: 4px 14px;
+      border-radius: 5px;
+      border: 1px solid #303841;
+      background: #1c2128;
+      color: #8d98a5;
+      font-size: 12px;
+      cursor: pointer;
+    }
+    .page-tab:hover { border-color: #4a6fa5; color: #cdd9e5; }
+    .page-tab.active { background: #1f6feb22; border-color: #1f6feb; color: #79c0ff; font-weight: 600; }
+    .page-add {
+      padding: 4px 10px;
+      border-radius: 5px;
+      border: 1px dashed #303841;
+      background: transparent;
+      color: #8d98a5;
+      font-size: 14px;
+      cursor: pointer;
+    }
+    .page-add:hover { border-color: #4a6fa5; color: #cdd9e5; }
     .deck {
       width: min(100%, 900px);
       display: grid;
@@ -851,6 +925,10 @@ export class PropertyInspectorServer {
       <div class="deck-wrap">
         <div class="deck" id="deck"></div>
       </div>
+      <div class="page-bar">
+        <div class="page-tabs" id="pageTabs"></div>
+        <button class="page-add" id="addPageBtn" title="Add page">+</button>
+      </div>
     </section>
 
     <aside class="inspector">
@@ -1008,6 +1086,51 @@ export class PropertyInspectorServer {
       renderDeck();
       renderInspector();
       renderStatus();
+      renderPages();
+    }
+
+    function renderPages() {
+      var tabs = byId("pageTabs");
+      if (!tabs || !state) return;
+      var count = state.pageCount || 1;
+      var active = state.activePage || 0;
+      tabs.innerHTML = "";
+      for (var i = 0; i < count; i++) {
+        (function(idx) {
+          var btn = document.createElement("button");
+          btn.className = "page-tab" + (idx === active ? " active" : "");
+          btn.textContent = "Page " + (idx + 1);
+          btn.addEventListener("click", function() { switchPage(idx); });
+          tabs.appendChild(btn);
+        })(i);
+      }
+    }
+
+    async function switchPage(pageIndex) {
+      var res = await fetch(apiUrl("/api/pages/switch"), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ pageIndex }),
+      });
+      if (res.ok) {
+        state = await res.json();
+        selectedKeyIndex = null;
+        render();
+      }
+    }
+
+    async function addPage() {
+      var res = await fetch(apiUrl("/api/pages/add"), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: "{}",
+      });
+      if (res.ok) {
+        state = await res.json();
+        // Switch to new page automatically
+        var newPage = (state.pageCount || 1) - 1;
+        await switchPage(newPage);
+      }
     }
 
     function renderStatus() {
@@ -1582,6 +1705,7 @@ export class PropertyInspectorServer {
       searchValue = event.target.value;
       renderActions();
     });
+    byId("addPageBtn").addEventListener("click", addPage);
     byId("refreshBtn").addEventListener("click", loadState);
     byId("assignBtn").addEventListener("click", assignSelectedAction);
     byId("clearBtn").addEventListener("click", clearSelectedTile);

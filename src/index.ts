@@ -459,7 +459,34 @@ async function main() {
       sendWillAppear(targetDeviceId, targetKeyIndex, sourceSlot)
       if (targetSlot) sendWillAppear(sourceDeviceId, sourceKeyIndex, targetSlot)
     },
+
+    switchPage: async (pageIndex) => {
+      const result = profileManager.switchPage(pageIndex)
+      if (!result) return
+      // Clear hardware and send willDisappear for old page
+      for (const { deviceId, keyIndex, slot } of result.oldSlots) {
+        sendWillDisappear(deviceId, keyIndex, slot)
+        await deviceManager.setKeyColor(deviceId, keyIndex, 0, 0, 0)
+      }
+      keyImages.clear()
+      await profileManager.save()
+      // Send willAppear for new page — plugins will respond with setImage
+      for (const { deviceId, keyIndex, slot } of result.newSlots) {
+        sendWillAppear(deviceId, keyIndex, slot)
+      }
+    },
+
+    addPage: async () => {
+      const newIndex = profileManager.addPage()
+      await profileManager.save()
+      return newIndex
+    },
   })
+
+  piServer.setPageProvider(() => ({
+    activePage: profileManager.getActivePage(),
+    pageCount: profileManager.getPageCount(),
+  }))
 
   await pluginManager.loadPlugins(pluginDir, pluginServer.getPort(), deviceInfo)
 

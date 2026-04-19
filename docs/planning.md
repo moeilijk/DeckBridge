@@ -42,7 +42,7 @@ Taken:
 - [x] `Copy` in contextmenu.
 - [x] `Paste` in contextmenu.
 - [x] `Duplicate` in contextmenu (naar eerste lege tegel).
-- `Clear` als expliciet menu-item naast remove.
+- ~~`Clear` als expliciet menu-item naast remove.~~ (zelfde als Remove, geschrapt)
 - [x] Clipboard-state zichtbaar maken in disabled/enabled menu states.
 - [x] Beslissen of paste context behoudt of nieuwe context maakt.
 
