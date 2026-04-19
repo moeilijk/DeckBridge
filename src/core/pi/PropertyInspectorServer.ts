@@ -27,6 +27,7 @@ export interface SlotEntry {
   settings: Record<string, unknown>
   piFile: string
   imageDataUrl?: string
+  isSystem?: boolean
 }
 
 export interface ActionEntry {
@@ -370,6 +371,11 @@ export class PropertyInspectorServer {
       return
     }
 
+    const slot = this.slotProvider?.().find(s => s.deviceId === deviceId && s.keyIndex === keyIndex)
+    if (slot?.isSystem) {
+      this.sendJson(res, 403, { error: 'System slots cannot be removed' })
+      return
+    }
     await this.clearSlotHandler(deviceId, keyIndex)
     this.sendJson(res, 200, this.getState(url))
   }
@@ -1601,11 +1607,11 @@ export class PropertyInspectorServer {
       var menu = byId("tileMenu");
       menu.classList.add("open");
       menu.setAttribute("aria-hidden", "false");
-      byId("menuOpenPiBtn").disabled = !slot.piUrl;
-      byId("menuCopyBtn").disabled = false;
-      byId("menuPasteBtn").disabled = !clipboard;
-      byId("menuDuplicateBtn").disabled = false;
-      byId("menuRemoveBtn").disabled = false;
+      byId("menuOpenPiBtn").disabled = !slot.piUrl || slot.isSystem;
+      byId("menuCopyBtn").disabled = !!slot.isSystem;
+      byId("menuPasteBtn").disabled = !clipboard || !!slot.isSystem;
+      byId("menuDuplicateBtn").disabled = !!slot.isSystem;
+      byId("menuRemoveBtn").disabled = !!slot.isSystem;
 
       var left = event.clientX;
       var top = event.clientY;

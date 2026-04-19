@@ -40,9 +40,42 @@ async function main() {
   const loggedSetImageContexts = new Set<string>()
   const keyImages = new Map<string, string>()
 
+  const SYSTEM_PLUGIN = 'com.deckbridge.system'
+  const ACTION_NEXT_PAGE = 'com.deckbridge.system.nextpage'
+
   await deviceManager.start()
   await deviceManager.clearAll()
   await profileManager.load()
+
+  // Ensure every page has a nextpage button; add to last key if missing
+  let profileDirty = false
+  const primaryId = deviceManager.getDeviceIds()[0] ?? 'deckbridge-xl-0'
+  const keysPerPage = (deviceManager.getDeviceIds()[0]
+    ? deviceManager.getColumns(deviceManager.getDeviceIds()[0]) * (deviceManager.getRows?.(deviceManager.getDeviceIds()[0]) ?? 4)
+    : 32)
+  const lastKey = keysPerPage - 1
+  for (let pi = 0; pi < profileManager.getPageCount(); pi++) {
+    const savedPage = profileManager.getActivePage()
+    profileManager.switchPage(pi)
+    const hasNav = profileManager.getAllSlots().some(s => s.slot.pluginId === SYSTEM_PLUGIN && s.slot.actionId === ACTION_NEXT_PAGE)
+    if (!hasNav) {
+      // Find last non-system slot and use the last key, bumping it if occupied
+      const existing = profileManager.getSlot(primaryId, lastKey)
+      if (existing && existing.pluginId !== SYSTEM_PLUGIN) {
+        // Move existing to first free key
+        for (let k = lastKey - 1; k >= 0; k--) {
+          if (!profileManager.getSlot(primaryId, k)) {
+            profileManager.moveSlot(primaryId, lastKey, primaryId, k)
+            break
+          }
+        }
+      }
+      profileManager.createSlot(primaryId, lastKey, SYSTEM_PLUGIN, ACTION_NEXT_PAGE)
+      profileDirty = true
+    }
+    profileManager.switchPage(savedPage)
+  }
+  if (profileDirty) await profileManager.save()
   await pluginServer.start()
 
   const pluginDir = join(homedir(), '.config', 'DeckBridge', 'plugins')
@@ -62,6 +95,17 @@ async function main() {
 
   function clearKeyImage(deviceId: string, keyIndex: number): void {
     keyImages.delete(keyImageId(deviceId, keyIndex))
+  }
+
+  async function renderSystemSlot(deviceId: string, keyIndex: number, actionId: string): Promise<void> {
+    const size = deviceManager.getIconSize(deviceId)
+    const pageCount = profileManager.getPageCount()
+    const activePage = profileManager.getActivePage()
+    const label = actionId === ACTION_NEXT_PAGE
+      ? (pageCount > 1 ? `${activePage + 1}/${pageCount}\n►` : '►')
+      : '?'
+    const rgb = await renderTitle(size, label, { fontSize: 14, titleAlignment: 'middle', titleColor: '#aaaaaa' })
+    await deviceManager.setImage(deviceId, keyIndex, rgb)
   }
 
   async function applyCachedKeyImage(deviceId: string, keyIndex: number): Promise<void> {
@@ -127,6 +171,25 @@ async function main() {
   deviceManager.on('keyDown', (e) => {
     const slot = profileManager.getSlot(e.deviceId, e.keyIndex)
     if (!slot) return
+    // System actions handled internally
+    if (slot.pluginId === SYSTEM_PLUGIN) {
+      if (slot.actionId === ACTION_NEXT_PAGE) {
+        const next = (profileManager.getActivePage() + 1) % profileManager.getPageCount()
+        const result = profileManager.switchPage(next)
+        if (result) {
+          for (const s of result.oldSlots) sendWillDisappear(s.deviceId, s.keyIndex, s.slot)
+          keyImages.clear()
+          deviceManager.clearAll().then(async () => {
+            await profileManager.save()
+            for (const s of result.newSlots) {
+              if (s.slot.pluginId === SYSTEM_PLUGIN) await renderSystemSlot(s.deviceId, s.keyIndex, s.slot.actionId)
+              else sendWillAppear(s.deviceId, s.keyIndex, s.slot)
+            }
+          }).catch(console.error)
+        }
+      }
+      return
+    }
     const pluginUUID = pluginManager.getPluginUUID(slot.pluginId)
     if (!pluginUUID) return
     pluginServer.sendToPlugin(pluginUUID, {
@@ -169,6 +232,7 @@ async function main() {
     if (type === 'plugin') {
       // Stuur willAppear voor elke knop van deze plugin
       for (const { deviceId, keyIndex, slot } of profileManager.getAllSlots()) {
+        if (slot.pluginId === SYSTEM_PLUGIN) continue
         if (pluginManager.getPluginUUID(slot.pluginId) !== uuid) continue
         sendWillAppear(deviceId, keyIndex, slot)
       }
@@ -393,12 +457,13 @@ async function main() {
     profileManager.getAllSlots().map(({ deviceId, keyIndex, slot }) => ({
       deviceId,
       keyIndex,
-      pluginId:  slot.pluginId,
-      actionId:  slot.actionId,
-      context:   slot.context,
-      settings:  slot.settings,
-      piFile:    pluginManager.getPiPath(slot.pluginId, slot.actionId),
+      pluginId:   slot.pluginId,
+      actionId:   slot.actionId,
+      context:    slot.context,
+      settings:   slot.settings,
+      piFile:     pluginManager.getPiPath(slot.pluginId, slot.actionId),
       imageDataUrl: keyImages.get(keyImageId(deviceId, keyIndex)),
+      isSystem:   slot.pluginId === SYSTEM_PLUGIN,
     }))
   )
   piServer.setActionProvider(() => pluginManager.getActions())
@@ -463,16 +528,18 @@ async function main() {
     switchPage: async (pageIndex) => {
       const result = profileManager.switchPage(pageIndex)
       if (!result) return
-      // Clear hardware and send willDisappear for old page
       for (const { deviceId, keyIndex, slot } of result.oldSlots) {
         sendWillDisappear(deviceId, keyIndex, slot)
-        await deviceManager.setKeyColor(deviceId, keyIndex, 0, 0, 0)
       }
       keyImages.clear()
+      await deviceManager.clearAll()
       await profileManager.save()
-      // Send willAppear for new page — plugins will respond with setImage
       for (const { deviceId, keyIndex, slot } of result.newSlots) {
-        sendWillAppear(deviceId, keyIndex, slot)
+        if (slot.pluginId === SYSTEM_PLUGIN) {
+          await renderSystemSlot(deviceId, keyIndex, slot.actionId)
+        } else {
+          sendWillAppear(deviceId, keyIndex, slot)
+        }
       }
     },
 
@@ -489,6 +556,13 @@ async function main() {
   }))
 
   await pluginManager.loadPlugins(pluginDir, pluginServer.getPort(), deviceInfo)
+
+  // Render system slots on the active page
+  for (const { deviceId, keyIndex, slot } of profileManager.getAllSlots()) {
+    if (slot.pluginId === SYSTEM_PLUGIN) {
+      await renderSystemSlot(deviceId, keyIndex, slot.actionId)
+    }
+  }
 
   const wsPort = pluginServer.getPort()
   const dashUrl = `${piServer.getDashboardUrl()}?wsPort=${wsPort}`

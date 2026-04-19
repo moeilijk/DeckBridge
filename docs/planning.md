@@ -60,7 +60,7 @@ Klaar wanneer:
 - Duplicate van een testactie visueel en fysiek rendert.
 - Menu-items correct disabled zijn als er geen bron/tegel is.
 
-### 3. Pages en profielen
+### 3. Pages en profielen ✓
 
 Waarom: een Stream Deck XL is snel vol; pages/folders zijn nodig voor echt
 gebruik.
