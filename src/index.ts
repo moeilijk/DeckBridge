@@ -35,7 +35,7 @@ async function main() {
   const deviceManager = new DeviceManager()
   const pluginServer = new PluginServer()
   const pluginManager = new PluginManager()
-  const profileManager = new ProfileManager()
+  const profileManager = new ProfileManager({ profileName: process.env.DECKBRIDGE_PROFILE ?? 'default' })
   const piServer = new PropertyInspectorServer()
   const loggedSetImageContexts = new Set<string>()
   const keyImages = new Map<string, string>()
@@ -441,10 +441,8 @@ async function main() {
       sendWillDisappear(sourceDeviceId, sourceKeyIndex, sourceSlot)
       if (targetSlot) sendWillDisappear(targetDeviceId, targetKeyIndex, targetSlot)
 
-      profileManager.removeSlot(sourceDeviceId, sourceKeyIndex)
-      if (targetSlot) profileManager.removeSlot(targetDeviceId, targetKeyIndex)
-      profileManager.setSlot(targetDeviceId, targetKeyIndex, sourceSlot)
-      if (targetSlot) profileManager.setSlot(sourceDeviceId, sourceKeyIndex, targetSlot)
+      const move = profileManager.moveSlot(sourceDeviceId, sourceKeyIndex, targetDeviceId, targetKeyIndex)
+      if (!move.moved) return
 
       if (sourceImage) keyImages.set(targetImageKey, sourceImage)
       else keyImages.delete(targetImageKey)

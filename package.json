@@ -9,6 +9,7 @@
     "dev:electron": "npm run build && env -u ELECTRON_RUN_AS_NODE electron dist/electron/main.js",
     "app": "npm run dev:electron",
     "build": "tsc",
+    "test": "node --test --import tsx tests/*.test.ts",
     "start": "node dist/index.js"
   },
   "keywords": [

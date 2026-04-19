@@ -35,9 +35,9 @@ Werkend:
 Doel: de huidige functionaliteit betrouwbaar genoeg maken om dagelijks te
 gebruiken.
 
-- [ ] Schone standaardprofielen: geen 32 testtegels als default.
-- [ ] Test/profiel seed data scheiden van echte gebruikerprofielen.
-- [ ] Profielmutatie-tests: assign, clear, move, swap.
+- [x] Schone standaardprofielen: geen 32 testtegels als default.
+- [x] Test/profiel seed data scheiden van echte gebruikerprofielen.
+- [x] Profielmutatie-tests: assign, clear, move, swap.
 - [ ] UI-fouten zichtbaar tonen in plaats van alleen console/log.
 - [ ] Laatste dashboard URL en daemon status duidelijk tonen in Electron.
 - [ ] Roadmap en faseplannen blijven synchroniseren met werkelijke status.

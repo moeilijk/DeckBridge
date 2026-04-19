@@ -60,6 +60,11 @@ Dashboard interactie:
 De Electron shell start dezelfde daemon als child process en laadt deze lokale
 UI in een desktopvenster. Zie [docs/electron.md](docs/electron.md).
 
+Profielen staan standaard in `~/.config/DeckBridge/profiles/default.json`.
+Gebruik `DECKBRIDGE_PROFILE=<naam>` om een apart profielbestand
+`<naam>.json` te gebruiken, bijvoorbeeld voor demo- of testprofielen zonder het
+echte default-profiel te vervuilen.
+
 ## Plugin Compatibiliteit
 
 DeckBridge implementeert het officiële Elgato Stream Deck WebSocket SDK protocol.

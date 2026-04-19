@@ -13,23 +13,25 @@ features op leunen.
 
 Taken:
 
-- Schone standaardstart maken zonder 32 testtegels.
-- Testprofiel of demo-profiel expliciet los trekken van `default.json`.
-- Profielmutaties testen:
-  - actie toewijzen aan lege tegel;
-  - actie vervangen op bestaande tegel;
-  - tegel verwijderen;
-  - tegel verplaatsen naar lege plek;
-  - twee tegels wisselen;
-  - context en settings behouden bij move/swap.
-- UI-fouten zichtbaar maken in de header/status in plaats van alleen console.
-- Bij profielmutaties de fysieke knop en UI-preview consistent houden.
+- [x] Schone standaardstart maken zonder 32 testtegels.
+- [x] Testprofiel of demo-profiel expliciet los trekken van `default.json` via
+  named profiles (`DECKBRIDGE_PROFILE=<naam>`).
+- [x] Profielmutaties testen:
+  - [x] actie toewijzen aan lege tegel;
+  - [x] actie vervangen op bestaande tegel;
+  - [x] tegel verwijderen;
+  - [x] tegel verplaatsen naar lege plek;
+  - [x] twee tegels wisselen;
+  - [x] context en settings behouden bij move/swap.
+- [ ] UI-fouten zichtbaar maken in de header/status in plaats van alleen console.
+- [ ] Bij profielmutaties de fysieke knop en UI-preview consistent houden met
+  bredere integratietests.
 
 Klaar wanneer:
 
-- Een nieuw profiel leeg of bewust gekozen demo-data bevat.
-- De bovengenoemde profielmutaties reproduceerbaar getest zijn.
-- Een mislukte API-call zichtbaar wordt in de UI.
+- [x] Een nieuw profiel leeg of bewust gekozen demo-data bevat.
+- [x] De bovengenoemde profielmutaties reproduceerbaar getest zijn.
+- [ ] Een mislukte API-call zichtbaar wordt in de UI.
 
 ### 2. Rechtermuisknop workflow
 
