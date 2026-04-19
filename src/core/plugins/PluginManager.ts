@@ -7,11 +7,15 @@ import { randomUUID } from 'crypto'
 
 interface ManifestAction {
   UUID: string
+  Name?: string
+  Tooltip?: string
+  Icon?: string
   PropertyInspectorPath?: string
 }
 
 interface Manifest {
   UUID: string
+  Name?: string
   Version: string
   SDKVersion?: number
   Nodejs?: { Version: string }
@@ -22,12 +26,23 @@ interface Manifest {
   Actions?: ManifestAction[]
 }
 
+export interface PluginActionInfo {
+  pluginId: string
+  pluginName: string
+  actionId: string
+  name: string
+  tooltip: string
+  icon?: string
+  piFile: string
+}
+
 // Publieke plugin metadata die andere componenten kunnen opvragen
 export interface PluginInfo {
   pluginId: string       // manifest UUID
+  pluginName: string
   pluginDir: string
   defaultPiPath: string  // fallback PropertyInspectorPath
-  actions: Map<string, string>  // actionId → PropertyInspectorPath
+  actions: Map<string, PluginActionInfo>  // actionId -> action metadata
 }
 
 interface PluginInstance {
@@ -71,16 +86,26 @@ export class PluginManager {
     }
 
     // Sla PI-paden op per actie zodat de host de juiste PI kan openen
-    const actionPiMap = new Map<string, string>()
+    const actionMap = new Map<string, PluginActionInfo>()
     for (const action of manifest.Actions ?? []) {
       const piPath = action.PropertyInspectorPath ?? manifest.PropertyInspectorPath ?? 'index_pi.html'
-      actionPiMap.set(action.UUID, piPath)
+      const pluginName = manifest.Name ?? manifest.UUID
+      actionMap.set(action.UUID, {
+        pluginId: manifest.UUID,
+        pluginName,
+        actionId: action.UUID,
+        name: action.Name ?? action.UUID,
+        tooltip: action.Tooltip ?? '',
+        icon: action.Icon,
+        piFile: piPath,
+      })
     }
     this.pluginInfo.set(manifest.UUID, {
       pluginId: manifest.UUID,
+      pluginName: manifest.Name ?? manifest.UUID,
       pluginDir,
       defaultPiPath: manifest.PropertyInspectorPath ?? 'index_pi.html',
-      actions: actionPiMap,
+      actions: actionMap,
     })
 
     const pluginUUID = randomUUID()
@@ -155,7 +180,13 @@ export class PluginManager {
 
   getPiPath(pluginId: string, actionId: string): string {
     const info = this.pluginInfo.get(pluginId)
-    return info?.actions.get(actionId) ?? info?.defaultPiPath ?? 'index_pi.html'
+    return info?.actions.get(actionId)?.piFile ?? info?.defaultPiPath ?? 'index_pi.html'
+  }
+
+  getActions(): PluginActionInfo[] {
+    return Array.from(this.pluginInfo.values())
+      .flatMap((info) => Array.from(info.actions.values()))
+      .sort((a, b) => `${a.pluginName}:${a.name}`.localeCompare(`${b.pluginName}:${b.name}`))
   }
 
   getPluginUUID(pluginId: string): string | undefined {

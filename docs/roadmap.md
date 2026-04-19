@@ -22,8 +22,8 @@ Doel: Stream Deck XL detecteren, knoppen werken, basis plugin communicatie.
 
 Doel: De meeste SDK-compatibele plugins draaien zonder aanpassingen.
 
-- [ ] Property Inspector: HTML serveren via lokale HTTP server
-- [ ] Property Inspector: `connectElgatoStreamDeckSocket` injectie in PI webview
+- [x] Property Inspector: HTML serveren via lokale HTTP server
+- [x] Property Inspector: `connectElgatoStreamDeckSocket` injectie in PI webview
 - [ ] `getSettings` / `setSettings` / `getGlobalSettings` / `setGlobalSettings`
 - [ ] `switchToProfile` — ProfileManager implementatie
 - [ ] `applicationDidLaunch` / `Terminate` via `/proc` polling op Linux
@@ -38,11 +38,13 @@ Doel: De meeste SDK-compatibele plugins draaien zonder aanpassingen.
 
 Doel: Configuratie UI zodat gebruikers zonder terminal kunnen werken.
 
-- [ ] Electron shell met system tray icoon
+- [x] Electron shell met desktopvenster
+- [ ] System tray icoon
+- [x] Lokale web-gebaseerde configuratie UI via DeckBridge daemon
 - [ ] Web-gebaseerde configuratie UI (Svelte)
 - [ ] Plugin installatie via drag-and-drop van .streamDeckPlugin bestanden
-- [ ] Visuele profiel editor (slepen van acties naar knoppen)
-- [ ] Apparaat preview (live weergave van knopindeling)
+- [x] Visuele profiel editor (acties naar knoppen slepen/toewijzen/verwijderen)
+- [x] Apparaat preview (live weergave van knopindeling)
 - [ ] Automatische udev installatie via setup wizard
 - [ ] Autostart bij login (systemd user service of XDG autostart)
 

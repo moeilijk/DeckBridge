@@ -6,12 +6,12 @@ DeckBridge bestaat uit twee lagen die onafhankelijk kunnen draaien:
 
 ```
 ┌─────────────────────────────────────────────────────────┐
-│  DeckBridge UI (Electron — fase 2)                      │
-│  - System tray                                          │
-│  - Configuratie UI (Svelte)                             │
-│  - Profiel beheer                                       │
+│  DeckBridge UI (Electron shell)                         │
+│  - Desktopvenster                                       │
+│  - Laadt lokale configuratie UI                         │
+│  - Start/stopt core daemon                              │
 └────────────────┬────────────────────────────────────────┘
-                 │ IPC / localhost HTTP
+                 │ child process + localhost HTTP
 ┌────────────────▼────────────────────────────────────────┐
 │  DeckBridge Core Daemon (Node.js — fase 1)              │
 │                                                         │
@@ -78,6 +78,39 @@ Beheert welke actie op welke knop zit, per apparaat.
 - Ondersteunt `switchToProfile` commando van plugins
 - Koppelt button-index aan plugin actie UUID
 
+### PropertyInspectorServer (`src/core/pi/`)
+
+Serveert de lokale dashboard UI en Property Inspector bestanden.
+
+- Dashboard endpoint: `/dashboard?wsPort=<ws-port>`
+- State endpoint: `/api/state?wsPort=<ws-port>`
+- Mutaties: `POST /api/slots` voor toewijzen, `DELETE /api/slots` voor
+  verwijderen
+- Injecteert een Stream Deck-achtige bootstrap in Property Inspector HTML zodat
+  plugin-PI's via dezelfde WebSocket server kunnen registreren
+- Publiceert acties uit plugin manifests als action library voor de UI
+- Publiceert per tegel de laatste preview-afbeelding als `imageDataUrl`
+
+De preview-afbeelding komt uit dezelfde raw RGB buffer die naar het apparaat
+gaat. Bij `setImage` decodeert de core de plugin-afbeelding naar het
+apparaatformaat; bij `setTitle` rendert de core tekst naar hetzelfde formaat.
+Die buffer wordt naar `DeviceManager.setImage()` gestuurd en tegelijk als PNG
+data URL in de dashboard state gezet. Daardoor toont de UI niet alleen de
+profielmetadata, maar de actuele tegel zoals het apparaat die krijgt.
+
+### Electron shell (`src/electron/`)
+
+Verantwoordelijk voor de desktop-app.
+
+- Start de gebouwde core daemon via `node dist/index.js`
+- Leest stdout totdat de daemon de lokale dashboard-URL print
+- Laadt die URL in een `BrowserWindow`
+- Stuurt bij afsluiten `SIGINT` naar de core zodat plugins en hardware netjes
+  worden gesloten
+- Houdt native HID, Wine en plugin processen buiten Electron zelf
+
+Zie [electron.md](electron.md) voor het procesmodel en de scripts.
+
 ## Plugin Communicatie Flow
 
 ```
@@ -87,7 +120,9 @@ Knopdruk op hardware
   → PluginServer: stuur keyDown event naar juiste plugin (via UUID)
   → Plugin verwerkt event, stuurt bijv. setImage terug
   → PluginServer ontvangt setImage
+  → Core decodeert/rendert naar raw RGB
   → DeviceManager stuurt afbeelding naar correcte knop
+  → PropertyInspectorServer publiceert dezelfde afbeelding als UI preview
 ```
 
 ## Platform Field

@@ -29,6 +29,35 @@ npm install
 npm run dev
 ```
 
+Voor de desktop-app:
+
+```bash
+npm run dev:electron
+```
+
+Bij het starten print DeckBridge een lokale dashboard-URL, bijvoorbeeld:
+
+```text
+Dashboard: http://127.0.0.1:<pi-port>/dashboard?wsPort=<ws-port>
+```
+
+Daar kun je acties uit de action library naar Stream Deck tegels slepen, tegels
+verwijderen, en de Property Inspector voor een tegel openen. Geconfigureerde
+tegels tonen live dezelfde afbeelding die naar de knop op het apparaat is
+gestuurd.
+
+Dashboard interactie:
+
+- Sleep een actie uit de action library naar een lege of bestaande tegel om die
+  actie toe te wijzen.
+- Sleep een bestaande tegel naar een andere tegel om ze te wisselen, of naar een
+  lege plek om hem te verplaatsen.
+- Klik op een geconfigureerde tegel om de Property Inspector te openen.
+- Rechtermuisklik op een tegel toont een menu met verwijderen.
+
+De Electron shell start dezelfde daemon als child process en laadt deze lokale
+UI in een desktopvenster. Zie [docs/electron.md](docs/electron.md).
+
 ## Plugin Compatibiliteit
 
 DeckBridge implementeert het officiële Elgato Stream Deck WebSocket SDK protocol.

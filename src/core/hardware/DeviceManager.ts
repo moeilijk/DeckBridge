@@ -98,6 +98,19 @@ export class DeviceManager extends EventEmitter {
     return buttonControls.reduce((max, c) => Math.max(max, c.column + 1), 1)
   }
 
+  getRows(deviceId: string): number {
+    const deck = this.devices.get(deviceId)
+    if (!deck) return 4
+    const buttonControls = deck.CONTROLS.filter(c => c.type === 'button')
+    return buttonControls.reduce((max, c) => Math.max(max, c.row + 1), 1)
+  }
+
+  getButtonCount(deviceId: string): number {
+    const deck = this.devices.get(deviceId)
+    if (!deck) return 32
+    return deck.CONTROLS.filter(c => c.type === 'button').length
+  }
+
   getIconSize(deviceId: string): number {
     return (this.devices.get(deviceId) as any)?.ICON_SIZE ?? 96
   }

@@ -5,6 +5,9 @@
   "main": "dist/index.js",
   "scripts": {
     "dev": "tsx src/index.ts",
+    "dev:core": "tsx src/index.ts",
+    "dev:electron": "npm run build && env -u ELECTRON_RUN_AS_NODE electron dist/electron/main.js",
+    "app": "npm run dev:electron",
     "build": "tsc",
     "start": "node dist/index.js"
   },
@@ -24,6 +27,7 @@
     "@types/node": "^22.0.0",
     "@types/sharp": "^0.31.1",
     "@types/ws": "^8.5.13",
+    "electron": "^41.2.1",
     "tsx": "^4.19.0",
     "typescript": "^5.8.0"
   }

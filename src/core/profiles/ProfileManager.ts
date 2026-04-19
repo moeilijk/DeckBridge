@@ -51,6 +51,8 @@ export class ProfileManager {
 
   setSlot(deviceId: string, keyIndex: number, slot: ButtonSlot): void {
     const key = `${deviceId}|${keyIndex}`
+    const previous = this.slots.get(key)
+    if (previous) this.contextIndex.delete(previous.context)
     this.slots.set(key, slot)
     this.contextIndex.set(slot.context, { deviceId, keyIndex })
   }
