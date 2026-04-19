@@ -238,22 +238,31 @@ const proc = spawn(cmd, args, {
 
 ---
 
-## Taak 5: lhm-streamdeck native Linux build
+## Taak 5: lhm-streamdeck testen via Wine + lhm-companion
 
-**Repository:** https://github.com/moeilijk/lhm-streamdeck
+**NIET cross-compileren naar Linux** — dat breekt Windows .exe compatibiliteit.
 
-De plugin is in Go geschreven. Het kan gekruist gecompileerd worden voor Linux:
-```bash
-cd lhm-streamdeck
-GOOS=linux GOARCH=amd64 go build -o lhm ./cmd/lhm_streamdeck_plugin/
-```
+De plugin (.exe) draait via Wine. Sensor data komt van **lhm-companion**
+(`/home/cvdveer/projects/GitHub/lhm-companion`), een Linux service die `/data.json`
+serveert in exact het LHM-formaat. De plugin ondersteunt "remote source profiles" —
+configureer hem met `http://localhost:8085` als bron. Geen plugin-aanpassingen nodig.
 
-**Probleem:** De plugin praat met Libre Hardware Monitor (Windows-only).
-De backend in de Go code moet worden vervangen door een Linux alternatief.
-LHM data komt via HTTP van `localhost:8085` (LibreHardwareMonitor REST API).
-Op Linux: vervang door `lm-sensors` / `/sys/class/hwmon/` of een eigen bridge daemon.
-
-Dit is een aparte taak en vereist aanpassing van de lhm-streamdeck plugin zelf.
+**Stappen:**
+1. lhm-companion installeren:
+   ```bash
+   cd /home/cvdveer/projects/GitHub/lhm-companion
+   sudo make install   # installeert binary + systemd service
+   sudo systemctl enable --now lhm-companion
+   curl http://localhost:8085/data.json | head -20  # verificatie
+   ```
+2. lhm-streamdeck.exe symlinken naar plugins dir:
+   ```bash
+   ln -sf /home/cvdveer/projects/GitHub/lhm-streamdeck/com.moeilijk.lhm.sdPlugin \
+     ~/.config/DeckBridge/plugins/
+   ```
+3. DeckBridge starten en controleren of Wine de plugin spawnt
+4. Plugin configureren: voeg source profile toe met URL `http://localhost:8085`
+5. Property Inspector openen via `piServer.getUrl()` in een browser
 
 ---
 
