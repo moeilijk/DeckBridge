@@ -1,4 +1,4 @@
-import { app, BrowserWindow, Menu, shell } from 'electron'
+import { app, BrowserWindow, Menu, Tray, nativeImage, clipboard, shell } from 'electron'
 import { spawn, type ChildProcess } from 'child_process'
 import { createInterface } from 'readline'
 import { join } from 'path'
@@ -7,6 +7,8 @@ let mainWindow: BrowserWindow | null = null
 let coreProcess: ChildProcess | null = null
 let coreExitTimer: NodeJS.Timeout | null = null
 let isQuitting = false
+let tray: Tray | null = null
+let dashboardUrl: string | null = null
 
 const repoRoot = join(__dirname, '..', '..')
 const coreEntry = join(repoRoot, 'dist', 'index.js')
@@ -143,7 +145,10 @@ function startCore(): void {
     appendLog(line)
     const match = line.match(dashboardPattern)
     if (match) {
+      dashboardUrl = match[1]
+      mainWindow?.setTitle('DeckBridge — connected')
       mainWindow?.loadURL(match[1]).catch((err) => showFatal(`Could not load dashboard: ${err.message}`))
+      updateTray()
     }
   })
 
@@ -181,6 +186,86 @@ function stopCore(): void {
   })
 }
 
+function makeTrayIcon(): Electron.NativeImage {
+  const size = 22
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}">
+    <rect width="${size}" height="${size}" fill="#111315"/>
+    <rect x="3" y="3" width="${size - 6}" height="${size - 6}" rx="3" fill="#1f6feb"/>
+    <text x="${size / 2}" y="${size / 2 + 4}" text-anchor="middle"
+          fill="white" font-size="10" font-family="sans-serif" font-weight="bold">D</text>
+  </svg>`
+  try {
+    return nativeImage.createFromDataURL(
+      `data:image/svg+xml;base64,${Buffer.from(svg).toString('base64')}`
+    )
+  } catch {
+    return nativeImage.createEmpty()
+  }
+}
+
+function isAutoStartEnabled(): boolean {
+  return app.getLoginItemSettings().openAtLogin
+}
+
+function setAutoStart(enable: boolean): void {
+  app.setLoginItemSettings({ openAtLogin: enable })
+}
+
+function buildTrayMenu(): Electron.Menu {
+  return Menu.buildFromTemplate([
+    { label: 'DeckBridge', enabled: false },
+    { type: 'separator' },
+    {
+      label: 'Show Dashboard',
+      click: () => {
+        if (!mainWindow) return
+        mainWindow.show()
+        mainWindow.focus()
+        if (dashboardUrl) mainWindow.loadURL(dashboardUrl).catch(console.error)
+      },
+    },
+    {
+      label: 'Copy Dashboard URL',
+      enabled: Boolean(dashboardUrl),
+      click: () => { if (dashboardUrl) clipboard.writeText(dashboardUrl) },
+    },
+    { type: 'separator' },
+    {
+      label: 'Start at Login',
+      type: 'checkbox',
+      checked: isAutoStartEnabled(),
+      click: (item) => { setAutoStart(item.checked); updateTray() },
+    },
+    { type: 'separator' },
+    {
+      label: 'Quit',
+      click: () => { isQuitting = true; app.quit() },
+    },
+  ])
+}
+
+function setupTray(): void {
+  if (tray) return
+  tray = new Tray(makeTrayIcon())
+  tray.setToolTip('DeckBridge — starting…')
+  tray.setContextMenu(buildTrayMenu())
+  tray.on('click', () => {
+    if (!mainWindow) return
+    if (mainWindow.isVisible() && !mainWindow.isMinimized()) {
+      mainWindow.hide()
+    } else {
+      mainWindow.show()
+      mainWindow.focus()
+    }
+  })
+}
+
+function updateTray(): void {
+  if (!tray) return
+  tray.setToolTip(dashboardUrl ? `DeckBridge — ${dashboardUrl}` : 'DeckBridge — starting…')
+  tray.setContextMenu(buildTrayMenu())
+}
+
 function installMenu(): void {
   Menu.setApplicationMenu(Menu.buildFromTemplate([
     {
@@ -209,6 +294,7 @@ app.whenReady().then(() => {
   installMenu()
   mainWindow = createWindow()
   startCore()
+  setupTray()
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) {

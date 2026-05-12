@@ -7,8 +7,17 @@ export interface ButtonEvent {
   keyIndex: number
 }
 
+export interface DeviceLifecycleEvent {
+  deviceId: string
+  name: string
+  model: string
+  columns: number
+  rows: number
+}
+
 export class DeviceManager extends EventEmitter {
   private devices = new Map<string, StreamDeck>()
+  private brightnessMap = new Map<string, number>()
   private writeQueue: Promise<void> = Promise.resolve()
 
   async start(): Promise<void> {
@@ -26,6 +35,13 @@ export class DeviceManager extends EventEmitter {
 
   async stop(): Promise<void> {
     for (const [id, device] of this.devices) {
+      this.emit('deviceDidDisconnect', {
+        deviceId: id,
+        name: device.PRODUCT_NAME,
+        model: device.MODEL,
+        columns: this.getColumns(id),
+        rows: this.getRows(id),
+      } satisfies DeviceLifecycleEvent)
       await device.close()
       console.log(`Device ${id} gesloten`)
     }
@@ -52,6 +68,13 @@ export class DeviceManager extends EventEmitter {
 
     this.devices.set(id, deck)
     console.log(`Stream Deck verbonden: ${deck.PRODUCT_NAME} (${deck.MODEL})`)
+    this.emit('deviceDidConnect', {
+      deviceId: id,
+      name: deck.PRODUCT_NAME,
+      model: deck.MODEL,
+      columns: this.getColumns(id),
+      rows: this.getRows(id),
+    } satisfies DeviceLifecycleEvent)
   }
 
   private enqueue(fn: () => Promise<void>): Promise<void> {
@@ -74,7 +97,12 @@ export class DeviceManager extends EventEmitter {
   async setBrightness(deviceId: string, percentage: number): Promise<void> {
     const deck = this.devices.get(deviceId)
     if (!deck) return
+    this.brightnessMap.set(deviceId, percentage)
     return this.enqueue(() => deck.setBrightness(percentage))
+  }
+
+  getBrightness(deviceId: string): number {
+    return this.brightnessMap.get(deviceId) ?? 70
   }
 
   getDeviceIds(): string[] {
@@ -86,6 +114,7 @@ export class DeviceManager extends EventEmitter {
   }
 
   async clearAll(): Promise<void> {
+    this.writeQueue = Promise.resolve()
     for (const [, deck] of this.devices) {
       await this.enqueue(() => deck.clearPanel())
     }

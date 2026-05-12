@@ -34,7 +34,10 @@ test('missing default profile loads as an empty profile and saves no slots', asy
 
     await manager.save()
     const saved = JSON.parse(await readFile(join(dir, 'default.json'), 'utf8'))
-    assert.deepEqual(saved, { slots: [] })
+    assert.deepEqual(saved, {
+      activePage: 0,
+      pages: [{ slots: [], folders: [] }],
+    })
   })
 })
 
@@ -118,11 +121,88 @@ test('saved slots are deterministic and load back with context indexes', async (
     await manager.save()
 
     const saved = JSON.parse(await readFile(join(dir, 'default.json'), 'utf8'))
-    assert.deepEqual(saved.slots.map((entry: { keyIndex: number }) => entry.keyIndex), [0, 2])
+    assert.deepEqual(saved.pages[0].slots.map((entry: { keyIndex: number }) => entry.keyIndex), [0, 2])
 
     const reloaded = new ProfileManager(dir)
     await reloaded.load()
     assert.equal(reloaded.getSlotByContext('zero')?.keyIndex, 0)
     assert.equal(reloaded.getSlotByContext('two')?.keyIndex, 2)
   })
+})
+
+test('folder navigation scopes visible slots to current view', async () => {
+  await withProfileDir(async (dir) => {
+    const manager = new ProfileManager(dir)
+    const folderId = manager.createFolder(deviceId, 0)
+
+    assert.equal(manager.enterFolder(folderId), true)
+    manager.setSlot(deviceId, 1, slot('inside-folder', { nested: true }))
+    assert.equal(manager.getAllSlots().length, 1)
+    assert.equal(manager.getSlot(deviceId, 1)?.context, 'inside-folder')
+
+    assert.equal(manager.exitFolder(), true)
+    assert.equal(manager.getSlot(deviceId, 1), undefined)
+    assert.equal(manager.getSlotByContext('inside-folder')?.folderId, folderId)
+  })
+})
+
+test('removing a folder slot removes nested folder contexts', async () => {
+  await withProfileDir(async (dir) => {
+    const manager = new ProfileManager(dir)
+    const folderId = manager.createFolder(deviceId, 0)
+
+    manager.enterFolder(folderId)
+    manager.setSlot(deviceId, 2, slot('nested-context'))
+    manager.exitFolder()
+
+    manager.removeSlot(deviceId, 0)
+
+    assert.equal(manager.getSlotByContext('nested-context'), undefined)
+    assert.deepEqual(manager.getFolderSlots(folderId), [])
+  })
+})
+
+test('undo restores state before slot assignment', () => {
+  const manager = new ProfileManager()
+  assert.equal(manager.canUndo(), false)
+  manager.setSlot(deviceId, 0, slot('ctx-a'))
+  assert.equal(manager.canUndo(), true)
+  assert.deepEqual(manager.getAllSlots().length, 1)
+  const ok = manager.undo()
+  assert.equal(ok, true)
+  assert.deepEqual(manager.getAllSlots().length, 0)
+  assert.equal(manager.canRedo(), true)
+})
+
+test('redo re-applies undone assignment', () => {
+  const manager = new ProfileManager()
+  manager.setSlot(deviceId, 3, slot('ctx-b'))
+  manager.undo()
+  assert.equal(manager.canRedo(), true)
+  const ok = manager.redo()
+  assert.equal(ok, true)
+  assert.equal(manager.getAllSlots().length, 1)
+  assert.equal(manager.getAllSlots()[0].slot.context, 'ctx-b')
+  assert.equal(manager.canRedo(), false)
+})
+
+test('new mutation after undo clears redo stack', () => {
+  const manager = new ProfileManager()
+  manager.setSlot(deviceId, 0, slot('ctx-c'))
+  manager.setSlot(deviceId, 1, slot('ctx-d'))
+  manager.undo()
+  assert.equal(manager.canRedo(), true)
+  manager.setSlot(deviceId, 2, slot('ctx-e'))
+  assert.equal(manager.canRedo(), false)
+})
+
+test('moveSlot creates a single undo step', () => {
+  const manager = new ProfileManager()
+  manager.setSlot(deviceId, 0, slot('ctx-src'))
+  manager.moveSlot(deviceId, 0, deviceId, 5)
+  assert.equal(manager.getSlot(deviceId, 5)?.context, 'ctx-src')
+  manager.undo() // undo move
+  assert.equal(manager.getSlot(deviceId, 0)?.context, 'ctx-src')
+  manager.undo() // undo setSlot
+  assert.equal(manager.getAllSlots().length, 0)
 })

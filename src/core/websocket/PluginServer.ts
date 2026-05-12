@@ -13,6 +13,13 @@ export class PluginServer extends EventEmitter {
   private clients = new Map<string, PluginClient>()      // pluginUUID → plugin
   private piByContext = new Map<string, PluginClient>()  // context UUID → PI
   private port: number = 0
+  private readonly debugPI: boolean = process.env.DECKBRIDGE_DEBUG_PI === '1'
+
+  private logPIDebug(source: string, payload: unknown): void {
+    if (!this.debugPI) return
+    const ts = new Date().toISOString()
+    console.log(`[PI-WS ${ts}] ${source}: ${JSON.stringify(payload)}`)
+  }
 
   async start(): Promise<void> {
     await new Promise<void>((resolve) => {
@@ -65,8 +72,10 @@ export class PluginServer extends EventEmitter {
       // uuid = context UUID van de knop waarvoor de PI opent
       this.piByContext.set(msg.uuid, client)
       console.log(`PI geregistreerd voor context: ${msg.uuid}`)
+      this.logPIDebug('register', { context: msg.uuid, activePIs: this.piByContext.size })
       socket.on('close', () => {
         this.piByContext.delete(msg.uuid)
+        this.logPIDebug('close', { context: msg.uuid, activePIs: this.piByContext.size })
         this.emit('piClosed', msg.uuid)
       })
     } else {
@@ -90,6 +99,14 @@ export class PluginServer extends EventEmitter {
     } catch {
       return
     }
+    if (client.type === 'propertyInspector') {
+      this.logPIDebug('message-from-pi', {
+        context: client.uuid,
+        event: typeof msg.event === 'string' ? msg.event : undefined,
+        action: typeof msg.action === 'string' ? msg.action : undefined,
+        messageContext: typeof msg.context === 'string' ? msg.context : undefined,
+      })
+    }
     this.emit('pluginMessage', client.uuid, client.type, msg)
   }
 
@@ -102,6 +119,11 @@ export class PluginServer extends EventEmitter {
 
   sendToPropertyInspector(context: string, payload: Record<string, unknown>): void {
     const pi = this.piByContext.get(context)
+    this.logPIDebug('send-to-pi', {
+      context,
+      hasTarget: Boolean(pi),
+      event: typeof payload.event === 'string' ? payload.event : undefined,
+    })
     if (pi?.socket.readyState === WebSocket.OPEN) {
       pi.socket.send(JSON.stringify(payload))
     }

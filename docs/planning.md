@@ -85,23 +85,22 @@ Klaar wanneer:
 - Hardware toont na page switch de juiste tegels.
 - `willAppear` en `willDisappear` blijven correct.
 
-### 4. Folders
+### 4. Folders ✓
 
 Waarom: folders zijn de natuurlijke manier om sub-grids te maken.
 
 Taken:
 
-- Folder slot type in profielmodel.
-- Folder openen/sluiten in UI.
-- Folder openen op hardware via key press.
-- Breadcrumb/back button.
-- Drag/drop binnen folders.
+- [x] Stap 4a: `ProfileManager` folder datamodel en navigatiestack.
+- [x] Stap 4b: `index.ts` folder/back systeemacties, `keyDown`, hardware render.
+- [x] Stap 4c: Dashboard UI — foldertegel tonen, aanmaken, breadcrumb/back.
+- [x] Drag/drop binnen folders.
 
 Klaar wanneer:
 
-- Een foldertegel opent een tweede grid.
-- Terug navigeren herstelt de vorige grid.
-- Tegels in folders blijven persistent.
+- [x] Een foldertegel opent een tweede grid.
+- [x] Terug navigeren herstelt de vorige grid.
+- [x] Tegels in folders blijven persistent.
 
 ### 5. Plugin compatibiliteit
 
@@ -109,13 +108,22 @@ Waarom: de waarde van DeckBridge zit in bestaande plugin support.
 
 Taken:
 
-- `switchToProfile` afronden.
-- `applicationDidLaunch` en `applicationDidTerminate` implementeren.
-- `systemDidWakeUp` implementeren.
-- `deviceDidConnect` en `deviceDidDisconnect` implementeren.
-- `showAlert` en `showOk` visueel correct maken.
-- `logMessage` naar bestand.
-- Per-plugin Wine prefix.
+- [ ] `switchToProfile` afronden.
+- [x] `applicationDidLaunch` en `applicationDidTerminate` implementeren.
+- [x] `systemDidWakeUp` implementeren.
+- [x] `deviceDidConnect` en `deviceDidDisconnect` implementeren.
+- [x] `showAlert` en `showOk` visueel correct maken.
+- [x] `logMessage` naar bestand.
+- [x] Per-plugin Wine prefix.
+
+Handtest checklist (Step 5):
+
+1. Start DeckBridge met `npm run app`.
+2. Open een plugin action en trigger `showOk`/`showAlert`; controleer korte overlay op fysieke key.
+3. Controleer plugin logfile in `~/.config/DeckBridge/logs/plugins/<plugin-id>.log` na `logMessage`.
+4. Zet `ApplicationsToMonitor` in plugin manifest of `DECKBRIDGE_MONITOR_APPS`, start/stop zo'n proces en controleer launch/terminate events in plugin gedrag/logs.
+5. Koppel Stream Deck los/aan en bevestig dat plugin correct reageert op connect/disconnect.
+6. Test `switchToProfile` voor page-switch paden (huidige fallback gebruikt page index).
 
 Klaar wanneer:
 

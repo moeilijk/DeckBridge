@@ -1,6 +1,6 @@
-import { readdir, readFile, writeFile, mkdir } from 'fs/promises'
+import { readdir, readFile, writeFile, mkdir, appendFile } from 'fs/promises'
 import { existsSync } from 'fs'
-import { join } from 'path'
+import { basename, join } from 'path'
 import { homedir } from 'os'
 import { spawn, ChildProcess } from 'child_process'
 import { randomUUID } from 'crypto'
@@ -11,18 +11,21 @@ interface ManifestAction {
   Tooltip?: string
   Icon?: string
   PropertyInspectorPath?: string
+  States?: { Image?: string }[]
 }
 
 interface Manifest {
-  UUID: string
+  UUID?: string
   Name?: string
   Version: string
   SDKVersion?: number
   Nodejs?: { Version: string }
   CodePath?: string
+  CodePathLinux?: string
   CodePathMac?: string
   CodePathWin?: string
   PropertyInspectorPath?: string  // globale fallback PI
+  ApplicationsToMonitor?: string[] | { linux?: string[]; mac?: string[]; windows?: string[] }
   Actions?: ManifestAction[]
 }
 
@@ -33,6 +36,7 @@ export interface PluginActionInfo {
   name: string
   tooltip: string
   icon?: string
+  stateImages: string[]
   piFile: string
 }
 
@@ -43,6 +47,7 @@ export interface PluginInfo {
   pluginDir: string
   defaultPiPath: string  // fallback PropertyInspectorPath
   actions: Map<string, PluginActionInfo>  // actionId -> action metadata
+  applicationsToMonitor: string[]
 }
 
 interface PluginInstance {
@@ -57,6 +62,17 @@ export class PluginManager {
   private pluginInfo = new Map<string, PluginInfo>()   // pluginId → info
   private globalSettings = new Map<string, Record<string, unknown>>()
   private settingsDir = join(homedir(), '.config', 'DeckBridge', 'settings')
+  private logsDir = join(homedir(), '.config', 'DeckBridge', 'logs', 'plugins')
+
+  private parseApplicationsToMonitor(value: Manifest['ApplicationsToMonitor']): string[] {
+    if (!value) return []
+    const normalize = (items: string[]): string[] => items
+      .map((v) => v.trim())
+      .filter(Boolean)
+
+    if (Array.isArray(value)) return normalize(value)
+    return normalize(value.linux ?? value.mac ?? value.windows ?? [])
+  }
 
   async loadPlugins(pluginDir: string, wsPort: number, deviceInfo: object): Promise<void> {
     if (!existsSync(pluginDir)) {
@@ -85,27 +101,39 @@ export class PluginManager {
       return
     }
 
+    // Some older plugin bundles omit top-level UUID; fall back to folder name.
+    const pluginId = (typeof manifest.UUID === 'string' && manifest.UUID.length > 0)
+      ? manifest.UUID
+      : basename(pluginDir, '.sdPlugin')
+    if (!manifest.UUID) {
+      console.warn(`Manifest UUID ontbreekt, fallback naar mapnaam: ${pluginId}`)
+    }
+
     // Sla PI-paden op per actie zodat de host de juiste PI kan openen
     const actionMap = new Map<string, PluginActionInfo>()
     for (const action of manifest.Actions ?? []) {
-      const piPath = action.PropertyInspectorPath ?? manifest.PropertyInspectorPath ?? 'index_pi.html'
-      const pluginName = manifest.Name ?? manifest.UUID
+      const piPath = action.PropertyInspectorPath ?? manifest.PropertyInspectorPath ?? ''
+      const pluginName = manifest.Name ?? pluginId
       actionMap.set(action.UUID, {
-        pluginId: manifest.UUID,
+        pluginId,
         pluginName,
         actionId: action.UUID,
         name: action.Name ?? action.UUID,
         tooltip: action.Tooltip ?? '',
         icon: action.Icon,
+        stateImages: (action.States ?? [])
+          .map((state) => state.Image)
+          .filter((image): image is string => typeof image === 'string' && image.length > 0),
         piFile: piPath,
       })
     }
-    this.pluginInfo.set(manifest.UUID, {
-      pluginId: manifest.UUID,
-      pluginName: manifest.Name ?? manifest.UUID,
+    this.pluginInfo.set(pluginId, {
+      pluginId,
+      pluginName: manifest.Name ?? pluginId,
       pluginDir,
-      defaultPiPath: manifest.PropertyInspectorPath ?? 'index_pi.html',
+      defaultPiPath: manifest.PropertyInspectorPath ?? '',
       actions: actionMap,
+      applicationsToMonitor: this.parseApplicationsToMonitor(manifest.ApplicationsToMonitor),
     })
 
     const pluginUUID = randomUUID()
@@ -113,7 +141,7 @@ export class PluginManager {
       application: { language: 'en', platform: 'mac', platformVersion: '14.0', version: '7.3.0' },
       devicePixelRatio: 1,
       devices: [deviceInfo],
-      plugin: { uuid: manifest.UUID, version: manifest.Version },
+      plugin: { uuid: pluginId, version: manifest.Version },
     })
 
     const args = ['-port', String(wsPort), '-pluginUUID', pluginUUID, '-registerEvent', 'registerPlugin', '-info', infoJson]
@@ -128,8 +156,18 @@ export class PluginManager {
         return
       }
 
-      this.spawnPlugin(manifest.UUID, pluginUUID, pluginDir, 'node', [entryPoint, ...args])
+        this.spawnPlugin(pluginId, pluginUUID, pluginDir, 'node', [entryPoint, ...args])
     } else {
+      // Prefer a native Linux binary when CodePathLinux is declared and present.
+      const linuxBin = manifest.CodePathLinux
+      if (linuxBin) {
+        const binPath = join(pluginDir, linuxBin)
+        if (existsSync(binPath)) {
+          this.spawnPlugin(pluginId, pluginUUID, pluginDir, binPath, args)
+          return
+        }
+      }
+
       const codePath = manifest.CodePathWin ?? manifest.CodePath
       if (!codePath) return
 
@@ -139,10 +177,10 @@ export class PluginManager {
         return
       }
 
-      const winePrefix = join(homedir(), '.config', 'DeckBridge', 'wine', manifest.UUID)
+      const winePrefix = join(homedir(), '.config', 'DeckBridge', 'wine', pluginId)
       await mkdir(winePrefix, { recursive: true })
 
-      this.spawnPlugin(manifest.UUID, pluginUUID, pluginDir, 'wine', [exePath, ...args], {
+      this.spawnPlugin(pluginId, pluginUUID, pluginDir, 'wine', [exePath, ...args], {
         WINEPREFIX: winePrefix,
         WINEDEBUG: '-all',
       })
@@ -180,7 +218,45 @@ export class PluginManager {
 
   getPiPath(pluginId: string, actionId: string): string {
     const info = this.pluginInfo.get(pluginId)
-    return info?.actions.get(actionId)?.piFile ?? info?.defaultPiPath ?? 'index_pi.html'
+    return info?.actions.get(actionId)?.piFile ?? info?.defaultPiPath ?? ''
+  }
+
+  getIconFilePath(pluginId: string, actionId: string): string | undefined {
+    const info = this.pluginInfo.get(pluginId)
+    if (!info) return undefined
+    const iconRelative = info.actions.get(actionId)?.icon
+    if (!iconRelative) return undefined
+    // Manifest icons are usually extension-less; try common asset extensions.
+    const base = join(info.pluginDir, iconRelative)
+    const candidates = [
+      `${base}.png`, `${base}@2x.png`,
+      `${base}.svg`,
+      `${base}.webp`, `${base}.jpg`, `${base}.jpeg`,
+      base,
+    ]
+    for (const candidate of candidates) {
+      if (existsSync(candidate)) return candidate
+    }
+    return undefined
+  }
+
+  getStateImageFilePath(pluginId: string, actionId: string, state: number): string | undefined {
+    const info = this.pluginInfo.get(pluginId)
+    if (!info) return undefined
+    const imageRelative = info.actions.get(actionId)?.stateImages[state]
+    if (!imageRelative) return undefined
+    // States[n].Image is usually extension-less; try common asset extensions.
+    const base = join(info.pluginDir, imageRelative)
+    const candidates = [
+      `${base}.png`, `${base}@2x.png`,
+      `${base}.svg`,
+      `${base}.webp`, `${base}.jpg`, `${base}.jpeg`,
+      base,
+    ]
+    for (const candidate of candidates) {
+      if (existsSync(candidate)) return candidate
+    }
+    return undefined
   }
 
   getActions(): PluginActionInfo[] {
@@ -189,10 +265,28 @@ export class PluginManager {
       .sort((a, b) => `${a.pluginName}:${a.name}`.localeCompare(`${b.pluginName}:${b.name}`))
   }
 
+  getApplicationsToMonitor(): string[] {
+    return Array.from(new Set(
+      Array.from(this.pluginInfo.values()).flatMap((info) => info.applicationsToMonitor),
+    )).sort((a, b) => a.localeCompare(b))
+  }
+
   getPluginUUID(pluginId: string): string | undefined {
     for (const instance of this.instances.values()) {
       if (instance.uuid === pluginId) return instance.pluginUUID
     }
+  }
+
+  getPluginIdByPluginUUID(pluginUUID: string): string | undefined {
+    return this.instances.get(pluginUUID)?.uuid
+  }
+
+  async appendPluginLog(pluginUUID: string, message: string): Promise<void> {
+    const pluginId = this.getPluginIdByPluginUUID(pluginUUID)
+    if (!pluginId) return
+    await mkdir(this.logsDir, { recursive: true })
+    const ts = new Date().toISOString()
+    await appendFile(join(this.logsDir, `${pluginId}.log`), `[${ts}] ${message}\n`, 'utf8')
   }
 
   // pluginUUID hier = de random UUID van de WebSocket verbinding
