@@ -1568,6 +1568,11 @@ export class PropertyInspectorServer {
     .deck.dragging .key {
       border-color: #50616f;
     }
+    .deck.dragging .key.drop-eligible.empty {
+      background: #132019;
+      border-color: #2d8155;
+      border-style: solid;
+    }
     .key-num {
       color: var(--muted);
       font-size: 11px;
@@ -2166,6 +2171,11 @@ export class PropertyInspectorServer {
       if (event.dataTransfer) event.dataTransfer.dropEffect = parseSlotDragPayload(event) ? "move" : "copy";
     }
 
+    function currentDragCanDropOnKey(keyIndex) {
+      if (draggingSlot) return canDropSlotOnKey(draggingSlot, keyIndex);
+      return canDropActionKeyOnKey(draggingActionKey, keyIndex);
+    }
+
     function actionAvailableOnCurrentDevice(action) {
       var controllers = Array.isArray(action.controllers) && action.controllers.length ? action.controllers : ["Keypad"];
       var device = currentDevice();
@@ -2560,7 +2570,8 @@ export class PropertyInspectorServer {
         var isMoving = draggingSlot && slot && draggingSlot.deviceId === slot.deviceId && draggingSlot.keyIndex === i;
         var key = document.createElement("button");
         var hasImage = slot && typeof slot.imageDataUrl === "string" && slot.imageDataUrl.length > 0;
-        key.className = "key " + (slot ? "configured" : "empty") + (isFolderSlot(slot) ? " folder" : "") + (hasImage ? " has-image" : "") + (isMoving ? " moving" : "") + (selectedKeyIndex === i ? " selected" : "");
+        var isDropEligible = Boolean(draggingActionKey || draggingSlot) && currentDragCanDropOnKey(i);
+        key.className = "key " + (slot ? "configured" : "empty") + (isFolderSlot(slot) ? " folder" : "") + (hasImage ? " has-image" : "") + (isMoving ? " moving" : "") + (isDropEligible ? " drop-eligible" : "") + (selectedKeyIndex === i ? " selected" : "");
         key.title = slot ? slot.actionId : "Empty";
         key.dataset.keyIndex = String(i);
         key.draggable = false;
@@ -2615,7 +2626,8 @@ export class PropertyInspectorServer {
           var isMoving = draggingSlot && slot && draggingSlot.deviceId === slot.deviceId && draggingSlot.keyIndex === keyIndex;
           var hasFeedbackImage = slot && slot.feedback && typeof slot.feedback.imageDataUrl === "string" && slot.feedback.imageDataUrl.length > 0;
           var display = document.createElement("div");
-          display.className = "key dial-display " + (slot ? "configured" : "empty") + (hasFeedbackImage ? " has-feedback" : "") + (isMoving ? " moving" : "") + (selectedKeyIndex === keyIndex ? " selected" : "");
+          var isDropEligible = Boolean(draggingActionKey || draggingSlot) && currentDragCanDropOnKey(keyIndex);
+          display.className = "key dial-display " + (slot ? "configured" : "empty") + (hasFeedbackImage ? " has-feedback" : "") + (isMoving ? " moving" : "") + (isDropEligible ? " drop-eligible" : "") + (selectedKeyIndex === keyIndex ? " selected" : "");
           display.title = slot ? slot.actionId : "Empty dial display";
           display.dataset.keyIndex = String(keyIndex);
           display.tabIndex = 0;
