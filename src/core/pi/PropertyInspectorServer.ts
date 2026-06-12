@@ -1902,7 +1902,7 @@ export class PropertyInspectorServer {
     <section class="workspace">
       <div class="header">
         <div>
-          <div class="brand">DeckBridge <span style="color:#00e676;font-weight:700">BUILD relurl-1754</span></div>
+          <div class="brand">DeckBridge <span style="color:#00e676;font-weight:700">BUILD relurl-1755</span></div>
           <div class="status" id="deckStatus">Loading</div>
         </div>
         <div class="header-actions">
@@ -2402,7 +2402,6 @@ export class PropertyInspectorServer {
 
       state.actions.forEach(function(action) {
         if (!actionAvailableOnCurrentDevice(action)) return;
-        if (selectedKeyIndex !== null && !actionSupportsKey(action, selectedKeyIndex)) return;
         var haystack = (action.pluginName + " " + action.name + " " + action.actionId).toLowerCase();
         if (filter && haystack.indexOf(filter) === -1) return;
         if (!groups[action.pluginName]) groups[action.pluginName] = [];
@@ -2748,7 +2747,7 @@ export class PropertyInspectorServer {
       byId("tileAction").textContent = slot ? displayActionName(slot) : "Empty";
       byId("tilePlugin").textContent = slot ? displayPluginName(slot) : "-";
       byId("tileContext").textContent = slot ? slot.context : "-";
-      byId("assignBtn").disabled = selectedKeyIndex === null || selectedActionKey === null || (!!slot?.isSystem && !isFolder);
+      byId("assignBtn").disabled = selectedKeyIndex === null || selectedActionKey === null || !canDropActionKeyOnKey(selectedActionKey, selectedKeyIndex) || (!!slot?.isSystem && !isFolder);
       byId("clearBtn").disabled = !slot || (!!slot.isSystem && !isFolder);
       byId("openPiBtn").disabled = !slot || (!isFolder && (!!slot.isSystem || !slot.piUrl));
       byId("createFolderBtn").disabled = selectedKeyIndex === null || !!slot?.isSystem;
