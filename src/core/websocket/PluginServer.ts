@@ -29,7 +29,7 @@ export class PluginServer extends EventEmitter {
 
   private async listenOnPort(port: number): Promise<void> {
     await new Promise<void>((resolve, reject) => {
-      this.wss = new WebSocketServer({ port }, () => {
+      this.wss = new WebSocketServer({ port, host: '127.0.0.1' }, () => {
         const addr = this.wss!.address() as { port: number }
         this.port = addr.port
         console.log(`PluginServer luistert op poort ${this.port}`)
