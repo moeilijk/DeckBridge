@@ -334,7 +334,7 @@ export class PropertyInspectorServer {
     const requestedPort = Number.isInteger(this.preferredPort) && this.preferredPort > 0 ? this.preferredPort : 34075
     await new Promise<void>((resolve, reject) => {
       this.server!.once('error', reject)
-      this.server!.listen(requestedPort, '127.0.0.1', () => {
+      this.server!.listen(requestedPort, '0.0.0.0', () => {
         this.port = (this.server!.address() as { port: number }).port
         console.log(`PI server op poort ${this.port}`)
         resolve()
@@ -386,6 +386,7 @@ export class PropertyInspectorServer {
 
   private async handleRequest(req: IncomingMessage, res: ServerResponse): Promise<void> {
     const url = new URL(req.url ?? '/', `http://127.0.0.1`)
+    console.log(`[HTTP] ${req.method} ${url.pathname} from ${req.socket.remoteAddress}`)
     res.setHeader('Access-Control-Allow-Origin', '*')
     res.setHeader('Access-Control-Allow-Methods', 'GET, POST, DELETE, OPTIONS')
     res.setHeader('Access-Control-Allow-Headers', 'Content-Type')
@@ -1852,7 +1853,7 @@ export class PropertyInspectorServer {
     <section class="workspace">
       <div class="header">
         <div>
-          <div class="brand">DeckBridge <span style="color:#00e676;font-weight:700">BUILD piurl-1705</span></div>
+          <div class="brand">DeckBridge <span style="color:#00e676;font-weight:700">BUILD wslip-1735</span></div>
           <div class="status" id="deckStatus">Loading</div>
         </div>
         <div class="header-actions">

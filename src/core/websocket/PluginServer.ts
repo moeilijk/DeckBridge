@@ -39,7 +39,11 @@ export class PluginServer extends EventEmitter {
     this.wss = new WebSocketServer({ server })
     this.port = (server.address() as { port: number }).port
     console.log(`PluginServer gekoppeld aan HTTP-server op poort ${this.port}`)
-    this.wss.on('connection', (socket: WebSocket, _req: IncomingMessage) => {
+    server.on('upgrade', (req) => {
+      console.log(`[WS-UPGRADE] ${req.url} from ${req.socket.remoteAddress}`)
+    })
+    this.wss.on('connection', (socket: WebSocket, req: IncomingMessage) => {
+      console.log(`[WS-CONNECT] from ${req.socket.remoteAddress}`)
       socket.once('message', (data) => this.handleRegistration(socket, data.toString()))
       socket.on('error', (err) => console.error('WebSocket fout:', err))
     })
