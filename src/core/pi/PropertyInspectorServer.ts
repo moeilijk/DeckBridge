@@ -1568,11 +1568,6 @@ export class PropertyInspectorServer {
     .deck.dragging .key {
       border-color: #50616f;
     }
-    .deck.dragging .key.empty {
-      background: #132019;
-      border-color: #2d8155;
-      border-style: solid;
-    }
     .key-num {
       color: var(--muted);
       font-size: 11px;
