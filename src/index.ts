@@ -179,21 +179,49 @@ async function main() {
     encoderFeedback.clear()
   }
 
-  function assertCompatibleSlotLocation(deviceId: string, keyIndex: number, pluginId: string, actionId: string): void {
+  function assertPhysicalSlotLocation(deviceId: string, keyIndex: number): 'Encoder' | 'Keypad' {
     const controller = getController(keyIndex)
     if (controller === 'Encoder') {
       const dialIndex = encoderIndex(keyIndex)
       if (dialIndex < 0 || dialIndex >= deviceManager.getDialCount(deviceId)) {
-        throw new Error(`Device ${deviceId} does not have compatible Encoder hardware for ${actionId}`)
+        throw new Error(`Device ${deviceId} does not have compatible Encoder hardware`)
       }
     } else {
       if (keyIndex < 0 || keyIndex >= deviceManager.getButtonCount(deviceId)) {
         throw new Error(`Device ${deviceId} does not have key ${keyIndex}`)
       }
     }
+    return controller
+  }
+
+  function assertCompatibleSlotLocation(deviceId: string, keyIndex: number, pluginId: string, actionId: string): void {
+    const controller = assertPhysicalSlotLocation(deviceId, keyIndex)
     if (!pluginManager.actionSupportsController(pluginId, actionId, controller)) {
       throw new Error(`Action ${actionId} does not support ${controller}`)
     }
+  }
+
+  function slotHasCompatibleLocation(deviceId: string, keyIndex: number, slot: ButtonSlot): boolean {
+    try {
+      assertPhysicalSlotLocation(deviceId, keyIndex)
+      if (slot.pluginId === SYSTEM_PLUGIN) return getController(keyIndex) === 'Keypad'
+      assertCompatibleSlotLocation(deviceId, keyIndex, slot.pluginId, slot.actionId)
+      return true
+    } catch {
+      return false
+    }
+  }
+
+  async function removeIncompatibleCurrentViewSlots(): Promise<void> {
+    let removed = false
+    for (const { deviceId, keyIndex, slot } of profileManager.getAllSlots()) {
+      if (slotHasCompatibleLocation(deviceId, keyIndex, slot)) continue
+      profileManager.removeSlot(deviceId, keyIndex)
+      keyImages.delete(keyImageId(deviceId, keyIndex))
+      encoderFeedback.delete(keyImageId(deviceId, keyIndex))
+      removed = true
+    }
+    if (removed) await profileManager.save()
   }
 
   function getSlotState(slot: ButtonSlot): number {
@@ -282,6 +310,7 @@ async function main() {
       await deviceManager.clearAll()
     }
     for (const { deviceId, keyIndex, slot } of profileManager.getAllSlots()) {
+      if (!slotHasCompatibleLocation(deviceId, keyIndex, slot)) continue
       if (slot.pluginId === SYSTEM_PLUGIN) {
         await renderSystemSlot(deviceId, keyIndex, slot.actionId)
       } else {
@@ -944,19 +973,21 @@ async function main() {
   const primaryDeviceId = initialDeviceId
 
   piServer.setSlotProvider(() =>
-    profileManager.getAllSlots().map(({ deviceId, keyIndex, slot }) => ({
-      deviceId,
-      keyIndex,
-      pluginId:   slot.pluginId,
-      actionId:   slot.actionId,
-      context:    slot.context,
-      settings:   slot.settings,
-      state:      getSlotState(slot),
-      piFile:     pluginManager.getPiPath(slot.pluginId, slot.actionId),
-      imageDataUrl: keyImages.get(keyImageId(deviceId, keyIndex)),
-      feedback:   encoderFeedback.get(keyImageId(deviceId, keyIndex)),
-      isSystem:   isImmutableSystemSlot(slot),
-    }))
+    profileManager.getAllSlots()
+      .filter(({ deviceId, keyIndex, slot }) => slotHasCompatibleLocation(deviceId, keyIndex, slot))
+      .map(({ deviceId, keyIndex, slot }) => ({
+        deviceId,
+        keyIndex,
+        pluginId:   slot.pluginId,
+        actionId:   slot.actionId,
+        context:    slot.context,
+        settings:   slot.settings,
+        state:      getSlotState(slot),
+        piFile:     pluginManager.getPiPath(slot.pluginId, slot.actionId),
+        imageDataUrl: keyImages.get(keyImageId(deviceId, keyIndex)),
+        feedback:   encoderFeedback.get(keyImageId(deviceId, keyIndex)),
+        isSystem:   isImmutableSystemSlot(slot),
+      }))
   )
   piServer.setActionProvider(() => pluginManager.getActions())
   piServer.setInstalledPluginProvider(() => pluginManager.getInstalledPlugins())
@@ -987,6 +1018,8 @@ async function main() {
     const rows = deviceManager.getRows(id)
     return { columns, rows, totalKeys: deviceManager.getButtonCount(id) || columns * rows }
   })
+  await removeIncompatibleCurrentViewSlots()
+
   piServer.setSlotMutationHandlers({
     assign: async ({ deviceId, keyIndex, pluginId, actionId, settings }) => {
       assertCompatibleSlotLocation(deviceId, keyIndex, pluginId, actionId)
