@@ -1902,7 +1902,7 @@ export class PropertyInspectorServer {
     <section class="workspace">
       <div class="header">
         <div>
-          <div class="brand">DeckBridge <span style="color:#00e676;font-weight:700">BUILD relurl-1753</span></div>
+          <div class="brand">DeckBridge <span style="color:#00e676;font-weight:700">BUILD relurl-1754</span></div>
           <div class="status" id="deckStatus">Loading</div>
         </div>
         <div class="header-actions">
@@ -2465,6 +2465,7 @@ export class PropertyInspectorServer {
             selectedActionKey = draggingActionKey;
             event.currentTarget.classList.add("dragging");
             byId("deck").classList.add("dragging");
+            updateDropEligibleState();
             event.dataTransfer.setData("application/x-deckbridge-action", draggingActionKey);
             event.dataTransfer.setData("text/plain", draggingActionKey);
             event.dataTransfer.effectAllowed = "copy";
@@ -2874,6 +2875,14 @@ export class PropertyInspectorServer {
       });
     }
 
+    function updateDropEligibleState() {
+      var isDragging = Boolean(draggingActionKey || draggingSlot);
+      document.querySelectorAll(".key").forEach(function(el) {
+        var keyIndex = Number(el.dataset.keyIndex);
+        el.classList.toggle("drop-eligible", isDragging && Number.isInteger(keyIndex) && currentDragCanDropOnKey(keyIndex));
+      });
+    }
+
     function endDrag() {
       removeFloatingTilePreview();
       draggingActionKey = null;
@@ -2881,6 +2890,7 @@ export class PropertyInspectorServer {
       pointerTileDrag = null;
       byId("deck").classList.remove("dragging");
       clearDragOverState();
+      updateDropEligibleState();
       renderActions();
       renderDeck();
       renderInspector();
@@ -2987,6 +2997,7 @@ export class PropertyInspectorServer {
         byId("deck").classList.add("dragging");
         pointerTileDrag.element.classList.add("moving");
         createFloatingTilePreview();
+        updateDropEligibleState();
         renderInspector();
       }
 
