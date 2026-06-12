@@ -371,7 +371,10 @@ export class PropertyInspectorServer {
       pluginId: slot.pluginId,
       settings: encodeURIComponent(JSON.stringify(slot.settings)),
     })
-    const url = `http://127.0.0.1:${this.port}/${slot.pluginId}/${piFile}?${params}`
+    // Relative URL so the PI iframe (and its WebSocket via location.hostname)
+    // inherit the host the dashboard was loaded from — e.g. the WSL IP — instead
+    // of being pinned to 127.0.0.1 and routed back through the WSL2 relay.
+    const url = `/${slot.pluginId}/${piFile}?${params}`
     this.logPIDebug('pi-url', {
       keyIndex: slot.keyIndex,
       deviceId: slot.deviceId,
@@ -1853,7 +1856,7 @@ export class PropertyInspectorServer {
     <section class="workspace">
       <div class="header">
         <div>
-          <div class="brand">DeckBridge <span style="color:#00e676;font-weight:700">BUILD wslip-1735</span></div>
+          <div class="brand">DeckBridge <span style="color:#00e676;font-weight:700">BUILD relurl-1750</span></div>
           <div class="status" id="deckStatus">Loading</div>
         </div>
         <div class="header-actions">
