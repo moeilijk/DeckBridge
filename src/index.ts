@@ -179,6 +179,23 @@ async function main() {
     encoderFeedback.clear()
   }
 
+  function assertCompatibleSlotLocation(deviceId: string, keyIndex: number, pluginId: string, actionId: string): void {
+    const controller = getController(keyIndex)
+    if (controller === 'Encoder') {
+      const dialIndex = encoderIndex(keyIndex)
+      if (dialIndex < 0 || dialIndex >= deviceManager.getDialCount(deviceId)) {
+        throw new Error(`Device ${deviceId} does not have compatible Encoder hardware for ${actionId}`)
+      }
+    } else {
+      if (keyIndex < 0 || keyIndex >= deviceManager.getButtonCount(deviceId)) {
+        throw new Error(`Device ${deviceId} does not have key ${keyIndex}`)
+      }
+    }
+    if (!pluginManager.actionSupportsController(pluginId, actionId, controller)) {
+      throw new Error(`Action ${actionId} does not support ${controller}`)
+    }
+  }
+
   function getSlotState(slot: ButtonSlot): number {
     return Number.isInteger(slot.state) && slot.state >= 0 ? slot.state : 0
   }
@@ -972,10 +989,7 @@ async function main() {
   })
   piServer.setSlotMutationHandlers({
     assign: async ({ deviceId, keyIndex, pluginId, actionId, settings }) => {
-      const controller = getController(keyIndex)
-      if (!pluginManager.actionSupportsController(pluginId, actionId, controller)) {
-        throw new Error(`Action ${actionId} does not support ${controller}`)
-      }
+      assertCompatibleSlotLocation(deviceId, keyIndex, pluginId, actionId)
       const existing = profileManager.getSlot(deviceId, keyIndex)
       if (existing?.pluginId === pluginId && existing.actionId === actionId) return
       if (existing) sendWillDisappear(deviceId, keyIndex, existing)
@@ -1004,6 +1018,10 @@ async function main() {
       if (!sourceSlot) return
 
       const targetSlot = profileManager.getSlot(targetDeviceId, targetKeyIndex)
+      assertCompatibleSlotLocation(targetDeviceId, targetKeyIndex, sourceSlot.pluginId, sourceSlot.actionId)
+      if (targetSlot) {
+        assertCompatibleSlotLocation(sourceDeviceId, sourceKeyIndex, targetSlot.pluginId, targetSlot.actionId)
+      }
       const sourceImageKey = keyImageId(sourceDeviceId, sourceKeyIndex)
       const targetImageKey = keyImageId(targetDeviceId, targetKeyIndex)
       const sourceImage = keyImages.get(sourceImageKey)

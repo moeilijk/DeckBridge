@@ -105,6 +105,7 @@ export interface DialEventRequest {
   pressed?: boolean
   hold?: boolean
   tapPos?: [number, number]
+  state?: 'down' | 'up'   // dial press: send only dialDown or only dialUp (for hold)
 }
 
 export interface EncoderFeedbackDisplay {
@@ -2073,6 +2074,14 @@ export class PropertyInspectorServer {
       return controllers.indexOf(isDialIndex(keyIndex) ? "Encoder" : "Keypad") !== -1;
     }
 
+    function actionAvailableOnCurrentDevice(action) {
+      var controllers = Array.isArray(action.controllers) && action.controllers.length ? action.controllers : ["Keypad"];
+      var device = currentDevice();
+      var hasDials = !!device && Number.isInteger(device.dials) && device.dials > 0;
+      if (controllers.indexOf("Keypad") !== -1) return true;
+      return controllers.indexOf("Encoder") !== -1 && hasDials;
+    }
+
     function dialIndexFromKey(keyIndex) {
       return keyIndex - ENCODER_BASE_INDEX;
     }
@@ -2290,6 +2299,7 @@ export class PropertyInspectorServer {
       var filter = searchValue.trim().toLowerCase();
 
       state.actions.forEach(function(action) {
+        if (!actionAvailableOnCurrentDevice(action)) return;
         if (selectedKeyIndex !== null && !actionSupportsKey(action, selectedKeyIndex)) return;
         var haystack = (action.pluginName + " " + action.name + " " + action.actionId).toLowerCase();
         if (filter && haystack.indexOf(filter) === -1) return;
