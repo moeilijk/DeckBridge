@@ -86,8 +86,11 @@ Doel: DeckBridge als normale desktop-app gebruiken.
 
 Doel: plugins en apparaten makkelijker beheren.
 
-- [ ] Plugin installatie via drag-and-drop van `.streamDeckPlugin` bestanden.
-- [ ] Plugin verwijderen/uitschakelen vanuit UI.
+- [x] Plugin installatie via file picker/dropzone voor `.streamDeckPlugin` en
+  `.zip` in Preferences > Plugins, plus pad fallback voor `.streamDeckPlugin`,
+  `.zip` of `.sdPlugin`.
+- [x] Plugin verwijderen vanuit Preferences > Plugins met bevestiging.
+- [ ] Plugins tijdelijk uitschakelen zonder verwijderen.
 - [ ] Multi-device ondersteuning voor meerdere Stream Decks tegelijk.
 - [ ] Profiel export/import.
 - [ ] Backups van profielwijzigingen.
@@ -95,9 +98,9 @@ Doel: plugins en apparaten makkelijker beheren.
 
 ## Later
 
-- [ ] `setFeedback` en `setFeedbackLayout` voor Stream Deck +.
-- [ ] `dialDown`, `dialUp`, `dialRotate`.
-- [ ] `touchTap`.
+- [x] `setFeedback` en `setFeedbackLayout` voor Stream Deck + dashboard-emulatie.
+- [x] `dialDown`, `dialUp`, `dialRotate` voor virtuele Stream Deck + dials.
+- [x] `touchTap` voor virtuele Stream Deck + dials.
 - [ ] Deep links via `streamdeck://`.
 - [ ] `didReceiveResources` en `setResources` voor nieuwere SDK-versies.
 - [ ] Chromium remote devtools voor PI debugging.

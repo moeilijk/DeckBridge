@@ -1,8 +1,8 @@
 import { createServer, IncomingMessage, ServerResponse, Server } from 'http'
 import { createReadStream, existsSync } from 'fs'
-import { readFile, appendFile, mkdir } from 'fs/promises'
-import { join, extname, dirname } from 'path'
-import { homedir } from 'os'
+import { readFile, appendFile, mkdir, writeFile, mkdtemp, rm } from 'fs/promises'
+import { join, extname, dirname, basename } from 'path'
+import { homedir, tmpdir } from 'os'
 
 const MIME: Record<string, string> = {
   '.html': 'text/html; charset=utf-8',
@@ -29,6 +29,7 @@ export interface SlotEntry {
   state?: number
   piFile: string
   imageDataUrl?: string
+  feedback?: EncoderFeedbackDisplay
   isSystem?: boolean
 }
 
@@ -41,12 +42,32 @@ export interface ActionEntry {
   icon?: string
   stateImages?: string[]
   piFile: string
+  controllers?: Array<'Keypad' | 'Encoder'>
+}
+
+export interface InstalledPluginEntry {
+  pluginId: string
+  pluginName: string
+  pluginDir: string
+  actionCount: number
+  running: boolean
 }
 
 export interface DeviceLayout {
   columns: number
   rows: number
   totalKeys: number
+}
+
+export interface DeviceSummary {
+  id: string
+  name: string
+  model: string
+  type: number
+  columns: number
+  rows: number
+  totalKeys: number
+  dials?: number
 }
 
 export interface ViewState {
@@ -75,6 +96,23 @@ export interface SlotMove {
   sourceKeyIndex: number
   targetDeviceId: string
   targetKeyIndex: number
+}
+
+export interface DialEventRequest {
+  deviceId: string
+  dialIndex: number
+  ticks?: number
+  pressed?: boolean
+  hold?: boolean
+  tapPos?: [number, number]
+}
+
+export interface EncoderFeedbackDisplay {
+  layout?: string
+  imageDataUrl?: string
+  title?: string
+  value?: string
+  indicator?: unknown
 }
 
 // Injected before </body> in every PI HTML response so browsers can connect
@@ -127,8 +165,11 @@ export class PropertyInspectorServer {
   private pluginBaseDir: string = ''
   private slotProvider: (() => SlotEntry[]) | null = null
   private actionProvider: (() => ActionEntry[]) | null = null
+  private installedPluginProvider: (() => InstalledPluginEntry[]) | null = null
   private layoutProvider: (() => DeviceLayout) | null = null
+  private devicesProvider: (() => DeviceSummary[]) | null = null
   private primaryDeviceProvider: (() => string | null) | null = null
+  private selectDeviceHandler: ((deviceId: string) => Promise<void> | void) | null = null
   private assignSlotHandler: ((assignment: SlotAssignment) => Promise<void> | void) | null = null
   private clearSlotHandler: ((deviceId: string, keyIndex: number) => Promise<void> | void) | null = null
   private moveSlotHandler: ((move: SlotMove) => Promise<void> | void) | null = null
@@ -146,8 +187,14 @@ export class PropertyInspectorServer {
   private undoStateProvider: (() => { canUndo: boolean; canRedo: boolean }) | null = null
   private brightnessHandler: ((deviceId: string, value: number) => Promise<void> | void) | null = null
   private brightnessProvider: ((deviceId: string) => number) | null = null
+  private dialRotateHandler: ((request: DialEventRequest) => Promise<void> | void) | null = null
+  private dialPressHandler: ((request: DialEventRequest) => Promise<void> | void) | null = null
+  private dialTouchHandler: ((request: DialEventRequest) => Promise<void> | void) | null = null
+  private installPluginHandler: ((sourcePath: string) => Promise<void> | void) | null = null
+  private uninstallPluginHandler: ((pluginId: string) => Promise<void> | void) | null = null
   private readonly debugPI: boolean = process.env.DECKBRIDGE_DEBUG_PI === '1'
   private readonly debugPILogPath: string = process.env.DECKBRIDGE_DEBUG_PI_LOG || join(homedir(), '.config', 'DeckBridge', 'logs', 'pi-debug.log')
+  private readonly preferredPort: number = Number(process.env.DECKBRIDGE_PI_PORT ?? 34075)
   private lastStateDebugSig = ''
   private debugLogReady = false
 
@@ -181,12 +228,24 @@ export class PropertyInspectorServer {
     this.actionProvider = fn
   }
 
+  setInstalledPluginProvider(fn: () => InstalledPluginEntry[]): void {
+    this.installedPluginProvider = fn
+  }
+
   setLayoutProvider(fn: () => DeviceLayout): void {
     this.layoutProvider = fn
   }
 
+  setDevicesProvider(fn: () => DeviceSummary[]): void {
+    this.devicesProvider = fn
+  }
+
   setPrimaryDeviceProvider(fn: () => string | null): void {
     this.primaryDeviceProvider = fn
+  }
+
+  setDeviceSelectionHandler(fn: (deviceId: string) => Promise<void> | void): void {
+    this.selectDeviceHandler = fn
   }
 
   setSlotMutationHandlers(handlers: {
@@ -243,6 +302,24 @@ export class PropertyInspectorServer {
     this.brightnessProvider = handlers.get
   }
 
+  setDialHandlers(handlers: {
+    rotate: (request: DialEventRequest) => Promise<void> | void
+    press: (request: DialEventRequest) => Promise<void> | void
+    touch?: (request: DialEventRequest) => Promise<void> | void
+  }): void {
+    this.dialRotateHandler = handlers.rotate
+    this.dialPressHandler = handlers.press
+    this.dialTouchHandler = handlers.touch ?? null
+  }
+
+  setPluginManagementHandlers(handlers: {
+    install: (sourcePath: string) => Promise<void> | void
+    uninstall: (pluginId: string) => Promise<void> | void
+  }): void {
+    this.installPluginHandler = handlers.install
+    this.uninstallPluginHandler = handlers.uninstall
+  }
+
   async start(pluginBaseDir: string): Promise<void> {
     this.pluginBaseDir = pluginBaseDir
 
@@ -254,8 +331,10 @@ export class PropertyInspectorServer {
       })
     })
 
-    await new Promise<void>((resolve) => {
-      this.server!.listen(0, '127.0.0.1', () => {
+    const requestedPort = Number.isInteger(this.preferredPort) && this.preferredPort > 0 ? this.preferredPort : 34075
+    await new Promise<void>((resolve, reject) => {
+      this.server!.once('error', reject)
+      this.server!.listen(requestedPort, '127.0.0.1', () => {
         this.port = (this.server!.address() as { port: number }).port
         console.log(`PI server op poort ${this.port}`)
         resolve()
@@ -342,6 +421,21 @@ export class PropertyInspectorServer {
       return
     }
 
+    if (url.pathname === '/api/plugins/install' && req.method === 'POST') {
+      await this.handleInstallPlugin(req, res, url)
+      return
+    }
+
+    if (url.pathname === '/api/plugins/upload' && req.method === 'POST') {
+      await this.handleUploadPlugin(req, res, url)
+      return
+    }
+
+    if (url.pathname === '/api/plugins/uninstall' && req.method === 'POST') {
+      await this.handleUninstallPlugin(req, res, url)
+      return
+    }
+
     if (url.pathname === '/api/slots' && req.method === 'POST') {
       await this.assignSlot(req, res, url)
       return
@@ -404,6 +498,26 @@ export class PropertyInspectorServer {
 
     if (url.pathname === '/api/device/brightness' && req.method === 'POST') {
       await this.handleSetBrightness(req, res)
+      return
+    }
+
+    if (url.pathname === '/api/device/select' && req.method === 'POST') {
+      await this.handleSelectDevice(req, res, url)
+      return
+    }
+
+    if (url.pathname === '/api/dials/rotate' && req.method === 'POST') {
+      await this.handleDialRotate(req, res)
+      return
+    }
+
+    if (url.pathname === '/api/dials/press' && req.method === 'POST') {
+      await this.handleDialPress(req, res)
+      return
+    }
+
+    if (url.pathname === '/api/dials/touch' && req.method === 'POST') {
+      await this.handleDialTouch(req, res)
       return
     }
 
@@ -489,16 +603,20 @@ export class PropertyInspectorServer {
     const wsPort = parseInt(url.searchParams.get('wsPort') ?? '0', 10)
     const slots = this.slotProvider?.() ?? []
     const actions = this.actionProvider?.() ?? []
+    const installedPlugins = this.installedPluginProvider?.() ?? []
     const layout = this.layoutProvider?.() ?? { columns: 8, rows: 4, totalKeys: 32 }
     const primaryDeviceId = this.primaryDeviceProvider?.() ?? null
+    const devices = this.devicesProvider?.() ?? []
 
     const pages = this.pageProvider?.() ?? { activePage: 0, pageCount: 1 }
     const view = this.viewProvider?.() ?? { inFolder: false, navDepth: 0 }
 
     const payload = {
       primaryDeviceId,
+      devices,
       layout,
       actions,
+      installedPlugins,
       activePage: pages.activePage,
       pageCount: pages.pageCount,
       view,
@@ -523,6 +641,128 @@ export class PropertyInspectorServer {
       })
     }
     return payload
+  }
+
+  private async handleInstallPlugin(req: IncomingMessage, res: ServerResponse, url: URL): Promise<void> {
+    if (!this.installPluginHandler) { this.sendJson(res, 501, { error: 'Not configured' }); return }
+    try {
+      const body = await this.readJson(req)
+      const sourcePath = isRecord(body) && typeof body.path === 'string' ? body.path.trim() : ''
+      if (!sourcePath) throw new Error('Missing plugin path')
+      await this.installPluginHandler(sourcePath)
+      this.sendJson(res, 200, this.getState(url))
+    } catch (err) {
+      this.sendJson(res, 400, { error: err instanceof Error ? err.message : 'Install failed' })
+    }
+  }
+
+  private async handleUploadPlugin(req: IncomingMessage, res: ServerResponse, url: URL): Promise<void> {
+    if (!this.installPluginHandler) { this.sendJson(res, 501, { error: 'Not configured' }); return }
+    const rawName = url.searchParams.get('filename') ?? 'plugin.streamDeckPlugin'
+    const filename = basename(rawName).replace(/[^a-zA-Z0-9._-]/g, '-')
+    if (!filename.endsWith('.streamDeckPlugin') && !filename.endsWith('.zip')) {
+      this.sendJson(res, 400, { error: 'Expected .streamDeckPlugin or .zip file' })
+      return
+    }
+
+    const tempRoot = await mkdtemp(join(tmpdir(), 'deckbridge-upload-'))
+    const uploadPath = join(tempRoot, filename)
+    try {
+      await writeFile(uploadPath, await this.readRaw(req, 250 * 1024 * 1024))
+      await this.installPluginHandler(uploadPath)
+      this.sendJson(res, 200, this.getState(url))
+    } catch (err) {
+      this.sendJson(res, 400, { error: err instanceof Error ? err.message : 'Upload install failed' })
+    } finally {
+      await rm(tempRoot, { recursive: true, force: true })
+    }
+  }
+
+  private async handleUninstallPlugin(req: IncomingMessage, res: ServerResponse, url: URL): Promise<void> {
+    if (!this.uninstallPluginHandler) { this.sendJson(res, 501, { error: 'Not configured' }); return }
+    try {
+      const body = await this.readJson(req)
+      const pluginId = isRecord(body) && typeof body.pluginId === 'string' ? body.pluginId.trim() : ''
+      if (!pluginId) throw new Error('Missing pluginId')
+      await this.uninstallPluginHandler(pluginId)
+      this.sendJson(res, 200, this.getState(url))
+    } catch (err) {
+      this.sendJson(res, 400, { error: err instanceof Error ? err.message : 'Uninstall failed' })
+    }
+  }
+
+  private async handleSelectDevice(req: IncomingMessage, res: ServerResponse, url: URL): Promise<void> {
+    if (!this.selectDeviceHandler) { this.sendJson(res, 501, { error: 'Not configured' }); return }
+    const body = await this.readJson(req)
+    const deviceId = typeof (body as Record<string, unknown>).deviceId === 'string'
+      ? (body as Record<string, unknown>).deviceId as string
+      : ''
+    if (!deviceId) {
+      this.sendJson(res, 400, { error: 'Invalid deviceId' })
+      return
+    }
+    await this.selectDeviceHandler(deviceId)
+    this.sendJson(res, 200, this.getState(url))
+  }
+
+  private parseDialRequest(body: unknown): DialEventRequest {
+    if (!isRecord(body)) throw new Error('Expected a JSON object')
+    const deviceId = typeof body.deviceId === 'string' && body.deviceId
+      ? body.deviceId
+      : this.primaryDeviceProvider?.()
+    const dialIndex = Number(body.dialIndex)
+    if (!deviceId) throw new Error('Missing deviceId')
+    if (!Number.isInteger(dialIndex) || dialIndex < 0) throw new Error('Invalid dialIndex')
+    const device = this.devicesProvider?.().find((candidate) => candidate.id === deviceId)
+    if (device && Number.isInteger(device.dials) && dialIndex >= (device.dials ?? 0)) {
+      throw new Error('Invalid dialIndex')
+    }
+    const ticks = Number(body.ticks)
+    const pressed = Boolean(body.pressed)
+    const rawTapPos = Array.isArray(body.tapPos) ? body.tapPos : undefined
+    const tapX = rawTapPos ? Number(rawTapPos[0]) : NaN
+    const tapY = rawTapPos ? Number(rawTapPos[1]) : NaN
+    return {
+      deviceId,
+      dialIndex,
+      ticks: Number.isFinite(ticks) && ticks !== 0 ? Math.trunc(ticks) : undefined,
+      pressed,
+      hold: Boolean(body.hold),
+      tapPos: Number.isFinite(tapX) && Number.isFinite(tapY) ? [Math.trunc(tapX), Math.trunc(tapY)] : undefined,
+    }
+  }
+
+  private async handleDialRotate(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    if (!this.dialRotateHandler) { this.sendJson(res, 501, { error: 'Not configured' }); return }
+    try {
+      const request = this.parseDialRequest(await this.readJson(req))
+      await this.dialRotateHandler(request)
+      this.sendJson(res, 200, { ok: true })
+    } catch (err) {
+      this.sendJson(res, 400, { error: err instanceof Error ? err.message : 'Invalid request' })
+    }
+  }
+
+  private async handleDialPress(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    if (!this.dialPressHandler) { this.sendJson(res, 501, { error: 'Not configured' }); return }
+    try {
+      const request = this.parseDialRequest(await this.readJson(req))
+      await this.dialPressHandler(request)
+      this.sendJson(res, 200, { ok: true })
+    } catch (err) {
+      this.sendJson(res, 400, { error: err instanceof Error ? err.message : 'Invalid request' })
+    }
+  }
+
+  private async handleDialTouch(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    if (!this.dialTouchHandler) { this.sendJson(res, 501, { error: 'Not configured' }); return }
+    try {
+      const request = this.parseDialRequest(await this.readJson(req))
+      await this.dialTouchHandler(request)
+      this.sendJson(res, 200, { ok: true })
+    } catch (err) {
+      this.sendJson(res, 400, { error: err instanceof Error ? err.message : 'Invalid request' })
+    }
   }
 
   private async handleCreateFolder(req: IncomingMessage, res: ServerResponse, url: URL): Promise<void> {
@@ -723,8 +963,12 @@ export class PropertyInspectorServer {
       this.sendJson(res, 403, { error: 'System slot' })
       return
     }
-    await this.assignSlotHandler(assignment)
-    this.sendJson(res, 200, this.getState(url))
+    try {
+      await this.assignSlotHandler(assignment)
+      this.sendJson(res, 200, this.getState(url))
+    } catch (err) {
+      this.sendJson(res, 400, { error: err instanceof Error ? err.message : 'Assignment failed' })
+    }
   }
 
   private async clearSlot(res: ServerResponse, url: URL): Promise<void> {
@@ -812,16 +1056,20 @@ export class PropertyInspectorServer {
   }
 
   private async readJson(req: IncomingMessage): Promise<unknown> {
+    const raw = (await this.readRaw(req, 1024 * 1024)).toString('utf8')
+    return raw ? JSON.parse(raw) : {}
+  }
+
+  private async readRaw(req: IncomingMessage, maxBytes: number): Promise<Buffer> {
     const chunks: Buffer[] = []
     let length = 0
     for await (const chunk of req) {
       const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)
       length += buffer.length
-      if (length > 1024 * 1024) throw new Error('Request body too large')
+      if (length > maxBytes) throw new Error('Request body too large')
       chunks.push(buffer)
     }
-    const raw = Buffer.concat(chunks).toString('utf8')
-    return raw ? JSON.parse(raw) : {}
+    return Buffer.concat(chunks)
   }
 
   private sendJson(res: ServerResponse, status: number, payload: unknown): void {
@@ -1094,6 +1342,18 @@ export class PropertyInspectorServer {
       white-space: nowrap;
       min-width: 68px;
     }
+    .device-select {
+      min-width: 160px;
+      max-width: 240px;
+      height: 32px;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      background: #0f1113;
+      color: var(--text);
+      padding: 0 8px;
+      font: inherit;
+      font-size: 12px;
+    }
     .brightness-slider {
       flex: 1;
       accent-color: var(--accent);
@@ -1151,6 +1411,13 @@ export class PropertyInspectorServer {
       border: 1px solid #282e33;
       box-shadow: 0 24px 80px rgba(0, 0, 0, .35);
     }
+    .dial-strip {
+      grid-column: 1 / -1;
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 10px;
+      padding-top: 2px;
+    }
     .key {
       position: relative;
       aspect-ratio: 1;
@@ -1164,6 +1431,38 @@ export class PropertyInspectorServer {
       grid-template-rows: 18px minmax(0, 1fr) 18px;
       gap: 3px;
       text-align: left;
+    }
+    .dial {
+      aspect-ratio: 1.45;
+      grid-template-rows: 18px minmax(0, 1fr) 30px;
+    }
+    .dial .key-label {
+      min-height: 0;
+      overflow: hidden;
+    }
+    .dial-feedback-image {
+      width: 100%;
+      aspect-ratio: 2 / 1;
+      object-fit: contain;
+      display: block;
+      background: #000;
+      border-radius: 4px;
+    }
+    .dial-controls {
+      display: grid;
+      grid-template-columns: 30px minmax(0, 1fr) 44px 30px;
+      gap: 5px;
+      align-items: center;
+    }
+    .dial-controls button {
+      min-height: 28px;
+      height: 28px;
+      padding: 0;
+      border-radius: 6px;
+      font-size: 13px;
+    }
+    .dial-press {
+      font-size: 11px !important;
     }
     .key.empty {
       background: #111418;
@@ -1284,6 +1583,164 @@ export class PropertyInspectorServer {
       display: grid;
       gap: 8px;
     }
+    .plugin-admin {
+      border-top: 1px solid var(--line);
+      padding-top: 14px;
+      display: grid;
+      gap: 10px;
+    }
+    .plugin-admin-title {
+      color: var(--muted);
+      font-size: 11px;
+      font-weight: 700;
+      text-transform: uppercase;
+    }
+    .plugin-dropzone {
+      border: 1px dashed #46525f;
+      border-radius: 8px;
+      background: #101419;
+      min-height: 78px;
+      padding: 12px;
+      display: grid;
+      place-items: center;
+      text-align: center;
+      gap: 6px;
+      color: var(--text);
+    }
+    .plugin-dropzone.drag-over {
+      border-color: var(--accent);
+      background: #132019;
+    }
+    .plugin-drop-main {
+      font-size: 13px;
+      font-weight: 650;
+    }
+    .plugin-drop-sub {
+      color: var(--muted);
+      font-size: 11px;
+    }
+    .plugin-admin input[type=file] {
+      display: none;
+    }
+    .plugin-install-row {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) 76px;
+      gap: 8px;
+    }
+    .plugin-install-row.compact {
+      grid-template-columns: minmax(0, 1fr) 64px;
+    }
+    .plugin-path {
+      min-width: 0;
+      height: 36px;
+      border: 1px solid var(--line);
+      border-radius: 7px;
+      background: #0f1113;
+      color: var(--text);
+      padding: 0 10px;
+      outline: none;
+    }
+    .plugin-path:focus {
+      border-color: var(--accent-2);
+    }
+    .plugin-list {
+      display: grid;
+      gap: 7px;
+    }
+    .plugin-item {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) 78px;
+      align-items: center;
+      gap: 8px;
+      border: 1px solid var(--line);
+      border-radius: 7px;
+      background: #121619;
+      padding: 8px;
+    }
+    .plugin-item-name {
+      font-size: 13px;
+      font-weight: 650;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .plugin-item-sub {
+      margin-top: 2px;
+      color: var(--muted);
+      font-size: 11px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .plugin-empty {
+      color: var(--muted);
+      font-size: 12px;
+      border: 1px dashed var(--line);
+      border-radius: 7px;
+      padding: 10px;
+      text-align: center;
+    }
+    .preferences-panel {
+      display: none;
+      position: fixed;
+      inset: 0;
+      z-index: 35;
+      background: rgba(0, 0, 0, .56);
+      place-items: center;
+      padding: 24px;
+    }
+    .preferences-panel.open {
+      display: grid;
+    }
+    .preferences-window {
+      width: min(760px, 96vw);
+      max-height: min(720px, 92vh);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--panel);
+      box-shadow: 0 24px 80px rgba(0, 0, 0, .52);
+      display: grid;
+      grid-template-rows: 62px minmax(0, 1fr);
+      overflow: hidden;
+    }
+    .preferences-body {
+      display: grid;
+      grid-template-columns: 170px minmax(0, 1fr);
+      min-height: 0;
+    }
+    .preferences-tabs {
+      border-right: 1px solid var(--line);
+      background: #14181d;
+      padding: 10px;
+      display: grid;
+      align-content: start;
+      gap: 4px;
+    }
+    .preferences-tab {
+      min-height: 34px;
+      border: 0;
+      border-radius: 6px;
+      background: transparent;
+      text-align: left;
+      padding: 0 10px;
+      color: var(--muted);
+    }
+    .preferences-tab.active {
+      color: var(--text);
+      background: #25303a;
+    }
+    .preferences-content {
+      min-width: 0;
+      overflow: auto;
+      padding: 16px;
+      display: grid;
+      gap: 16px;
+      align-content: start;
+    }
+    .preferences-content .plugin-admin {
+      border-top: 0;
+      padding-top: 0;
+    }
     .primary {
       background: #163724;
       border-color: #2d8155;
@@ -1389,6 +1846,7 @@ export class PropertyInspectorServer {
           <div class="status" id="deckStatus">Loading</div>
         </div>
         <div class="header-actions">
+          <button id="preferencesBtn" title="Preferences">&#9881;</button>
           <button id="refreshBtn">Refresh</button>
         </div>
         <div class="header-actions">
@@ -1408,6 +1866,8 @@ export class PropertyInspectorServer {
         <button class="page-add" id="addPageBtn" title="Add page">+</button>
       </div>
       <div class="device-bar">
+        <span class="device-bar-label">Device</span>
+        <select class="device-select" id="deviceSelect"></select>
         <span class="device-bar-label">&#9788; Brightness</span>
         <input class="brightness-slider" type="range" id="brightnessSlider" min="0" max="100" value="70" step="1">
         <span class="device-bar-value" id="brightnessValue">70%</span>
@@ -1444,6 +1904,38 @@ export class PropertyInspectorServer {
     </aside>
   </main>
 
+  <section class="preferences-panel" id="preferencesPanel" aria-hidden="true">
+    <div class="preferences-window" role="dialog" aria-modal="true" aria-labelledby="preferencesTitle">
+      <div class="header">
+        <div class="brand" id="preferencesTitle">Preferences</div>
+        <button class="close" id="closePreferencesBtn">x</button>
+      </div>
+      <div class="preferences-body">
+        <nav class="preferences-tabs" aria-label="Preferences">
+          <button class="preferences-tab active" type="button" data-tab="plugins">Plugins</button>
+        </nav>
+        <div class="preferences-content">
+          <div class="plugin-admin">
+            <div class="plugin-admin-title">Plugins</div>
+            <div class="plugin-dropzone" id="pluginDropzone">
+              <div>
+                <div class="plugin-drop-main">Drop plugin package</div>
+                <div class="plugin-drop-sub">.streamDeckPlugin or .zip</div>
+              </div>
+              <button class="secondary" id="choosePluginBtn" type="button">Install from File...</button>
+            </div>
+            <input id="pluginFileInput" type="file" accept=".streamDeckPlugin,.zip">
+            <div class="plugin-install-row">
+              <input class="plugin-path" id="pluginPathInput" placeholder="/path/plugin.streamDeckPlugin" autocomplete="off">
+              <button class="secondary" id="installPluginBtn">Install</button>
+            </div>
+            <div class="plugin-list" id="pluginList"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
   <section class="pi-panel" id="piPanel">
     <div class="header">
       <div class="brand">Property Inspector</div>
@@ -1479,6 +1971,7 @@ export class PropertyInspectorServer {
     window.DECKBRIDGE_DEBUG_PI = ${debugPI};
 
     var state = null;
+    var ENCODER_BASE_INDEX = 1000;
     var selectedKeyIndex = null;
     var selectedContext = null;
     var selectedActionKey = null;
@@ -1547,6 +2040,27 @@ export class PropertyInspectorServer {
         if (slot.keyIndex === keyIndex && slot.deviceId === state.primaryDeviceId) return slot;
       }
       return null;
+    }
+
+    function currentDevice() {
+      if (!state || !Array.isArray(state.devices)) return null;
+      for (var i = 0; i < state.devices.length; i++) {
+        if (state.devices[i].id === state.primaryDeviceId) return state.devices[i];
+      }
+      return null;
+    }
+
+    function isDialIndex(keyIndex) {
+      return keyIndex >= ENCODER_BASE_INDEX;
+    }
+
+    function actionSupportsKey(action, keyIndex) {
+      var controllers = Array.isArray(action.controllers) && action.controllers.length ? action.controllers : ["Keypad"];
+      return controllers.indexOf(isDialIndex(keyIndex) ? "Encoder" : "Keypad") !== -1;
+    }
+
+    function dialIndexFromKey(keyIndex) {
+      return keyIndex - ENCODER_BASE_INDEX;
     }
 
     function currentView() {
@@ -1636,6 +2150,7 @@ export class PropertyInspectorServer {
       renderInspector();
       renderStatus();
       renderPages();
+      renderPlugins();
     }
 
     function renderPages() {
@@ -1721,6 +2236,7 @@ export class PropertyInspectorServer {
     function renderStatus() {
       byId("deckStatus").textContent = state.layout.columns + " x " + state.layout.rows + " / " + state.slots.length + " configured";
       byId("actionCount").textContent = state.actions.length + " available";
+      renderDeviceSelect();
       var view = currentView();
       var breadcrumb = "Page " + ((state.activePage || 0) + 1);
       if (view.inFolder) breadcrumb += " / Folder" + (view.navDepth > 1 ? " " + view.navDepth : "");
@@ -1733,6 +2249,26 @@ export class PropertyInspectorServer {
       if (slider && !slider._dragging) { slider.value = bv; byId("brightnessValue").textContent = bv + "%"; }
     }
 
+    function renderDeviceSelect() {
+      var select = byId("deviceSelect");
+      if (!select || !state) return;
+      var current = select.value;
+      var wanted = state.primaryDeviceId || "";
+      var devices = Array.isArray(state.devices) ? state.devices : [];
+      var sig = devices.map(function(d) { return d.id + ":" + d.name; }).join("|");
+      if (select.dataset.sig !== sig) {
+        select.textContent = "";
+        devices.forEach(function(device) {
+          var option = document.createElement("option");
+          option.value = device.id;
+          option.textContent = device.name + " (" + device.columns + "x" + device.rows + (device.dials ? ", " + device.dials + " dials" : "") + ")";
+          select.appendChild(option);
+        });
+        select.dataset.sig = sig;
+      }
+      select.value = wanted || current;
+    }
+
     function renderActions() {
       var list = byId("actionList");
       list.textContent = "";
@@ -1740,6 +2276,7 @@ export class PropertyInspectorServer {
       var filter = searchValue.trim().toLowerCase();
 
       state.actions.forEach(function(action) {
+        if (selectedKeyIndex !== null && !actionSupportsKey(action, selectedKeyIndex)) return;
         var haystack = (action.pluginName + " " + action.name + " " + action.actionId).toLowerCase();
         if (filter && haystack.indexOf(filter) === -1) return;
         if (!groups[action.pluginName]) groups[action.pluginName] = [];
@@ -1781,7 +2318,7 @@ export class PropertyInspectorServer {
           name.textContent = action.name;
           var sub = document.createElement("div");
           sub.className = "action-subtitle";
-          sub.textContent = action.actionId;
+          sub.textContent = action.actionId + (Array.isArray(action.controllers) && action.controllers.indexOf("Encoder") !== -1 ? " · Encoder" : "");
           text.appendChild(name);
           text.appendChild(sub);
 
@@ -1821,13 +2358,57 @@ export class PropertyInspectorServer {
       });
     }
 
+    function renderPlugins() {
+      var list = byId("pluginList");
+      if (!list || !state) return;
+      list.textContent = "";
+      var plugins = Array.isArray(state.installedPlugins) ? state.installedPlugins : [];
+      if (plugins.length === 0) {
+        var empty = document.createElement("div");
+        empty.className = "plugin-empty";
+        empty.textContent = "No plugins installed";
+        list.appendChild(empty);
+        return;
+      }
+      plugins.forEach(function(plugin) {
+        var row = document.createElement("div");
+        row.className = "plugin-item";
+
+        var meta = document.createElement("div");
+        var name = document.createElement("div");
+        name.className = "plugin-item-name";
+        name.textContent = plugin.pluginName || plugin.pluginId;
+        var sub = document.createElement("div");
+        sub.className = "plugin-item-sub";
+        sub.textContent = (plugin.actionCount || 0) + " actions / " + (plugin.running ? "running" : "stopped");
+        meta.appendChild(name);
+        meta.appendChild(sub);
+
+        var remove = document.createElement("button");
+        remove.className = "danger";
+        remove.type = "button";
+        remove.textContent = "Remove";
+        remove.title = plugin.pluginId;
+        remove.addEventListener("click", function() {
+          if (!confirm("Uninstall " + (plugin.pluginName || plugin.pluginId) + "?")) return;
+          uninstallPlugin(plugin.pluginId).catch(function(err) {
+            showError(err.message || String(err));
+          });
+        });
+
+        row.appendChild(meta);
+        row.appendChild(remove);
+        list.appendChild(row);
+      });
+    }
+
     function patchDeckImages(images) {
       var deck = byId("deck");
-      var keys = deck.querySelectorAll("button[data-key-index]");
+      var keys = deck.querySelectorAll("[data-key-index]");
       for (var ki = 0; ki < keys.length; ki++) {
         var key = keys[ki];
         var i = parseInt(key.dataset.keyIndex, 10);
-        var entry = images.find(function(e) { return e.keyIndex === i; });
+        var entry = images.find(function(e) { return e.keyIndex === i && e.deviceId === state.primaryDeviceId; });
         var newSrc = entry ? entry.imageDataUrl : null;
         var hasImage = typeof newSrc === "string" && newSrc.length > 0;
         var keyHadImage = key.classList.contains("has-image");
@@ -1897,6 +2478,106 @@ export class PropertyInspectorServer {
         key.addEventListener("drop", handleDrop.bind(null, i));
         deck.appendChild(key);
       }
+
+      var device = currentDevice();
+      var dialCount = device && Number.isInteger(device.dials) ? device.dials : 0;
+      if (dialCount > 0) {
+        var strip = document.createElement("div");
+        strip.className = "dial-strip";
+        for (var d = 0; d < dialCount; d++) {
+          var keyIndex = ENCODER_BASE_INDEX + d;
+          var slot = slotForKey(keyIndex);
+          var isMoving = draggingSlot && slot && draggingSlot.deviceId === slot.deviceId && draggingSlot.keyIndex === keyIndex;
+          var dial = document.createElement("div");
+          dial.className = "key dial " + (slot ? "configured" : "empty") + (isMoving ? " moving" : "") + (selectedKeyIndex === keyIndex ? " selected" : "");
+          dial.title = slot ? slot.actionId : "Empty dial";
+          dial.dataset.keyIndex = String(keyIndex);
+          dial.tabIndex = 0;
+          dial.setAttribute("role", "button");
+
+          var num = document.createElement("div");
+          num.className = "key-num";
+          num.textContent = "Dial " + (d + 1);
+          dial.appendChild(num);
+
+          var label = document.createElement("div");
+          label.className = "key-label";
+          if (slot && slot.feedback && slot.feedback.imageDataUrl) {
+            var feedbackImage = document.createElement("img");
+            feedbackImage.src = slot.feedback.imageDataUrl;
+            feedbackImage.alt = displayActionName(slot);
+            feedbackImage.className = "dial-feedback-image";
+            label.appendChild(feedbackImage);
+          } else {
+            label.textContent = slot
+              ? (slot.feedback && (slot.feedback.title || slot.feedback.value)
+                ? [slot.feedback.title, slot.feedback.value].filter(Boolean).join(" ")
+                : displayActionName(slot))
+              : ((draggingActionKey || draggingSlot) ? "+" : "Empty");
+          }
+          dial.appendChild(label);
+
+          var controls = document.createElement("div");
+          controls.className = "dial-controls";
+          var dec = document.createElement("button");
+          dec.type = "button";
+          dec.textContent = "-";
+          dec.title = "Rotate left";
+          dec.addEventListener("click", function(idx, event) {
+            event.stopPropagation();
+            sendDialRotate(idx, -1).catch(function(err) { showError(err.message || String(err)); });
+          }.bind(null, d));
+          var press = document.createElement("button");
+          press.type = "button";
+          press.className = "dial-press";
+          press.textContent = "Press";
+          press.title = "Press dial";
+          press.addEventListener("click", function(idx, event) {
+            event.stopPropagation();
+            sendDialPress(idx).catch(function(err) { showError(err.message || String(err)); });
+          }.bind(null, d));
+          var touch = document.createElement("button");
+          touch.type = "button";
+          touch.textContent = "Touch";
+          touch.title = "Touch dial screen";
+          touch.addEventListener("click", function(idx, event) {
+            event.stopPropagation();
+            sendDialTouch(idx).catch(function(err) { showError(err.message || String(err)); });
+          }.bind(null, d));
+          var inc = document.createElement("button");
+          inc.type = "button";
+          inc.textContent = "+";
+          inc.title = "Rotate right";
+          inc.addEventListener("click", function(idx, event) {
+            event.stopPropagation();
+            sendDialRotate(idx, 1).catch(function(err) { showError(err.message || String(err)); });
+          }.bind(null, d));
+          controls.appendChild(dec);
+          controls.appendChild(press);
+          controls.appendChild(touch);
+          controls.appendChild(inc);
+          dial.appendChild(controls);
+
+          dial.addEventListener("click", activateKey.bind(null, keyIndex));
+          dial.addEventListener("contextmenu", openTileMenu.bind(null, keyIndex));
+          dial.addEventListener("pointerdown", handleTilePointerDown.bind(null, keyIndex));
+          dial.addEventListener("pointermove", handleTilePointerMove);
+          dial.addEventListener("pointerup", handleTilePointerUp);
+          dial.addEventListener("pointercancel", cancelTilePointerDrag);
+          dial.addEventListener("dragover", function(event) {
+            event.preventDefault();
+            closeTileMenu();
+            event.currentTarget.classList.add("drag-over");
+            if (event.dataTransfer) event.dataTransfer.dropEffect = "copy";
+          });
+          dial.addEventListener("dragleave", function(event) {
+            event.currentTarget.classList.remove("drag-over");
+          });
+          dial.addEventListener("drop", handleDrop.bind(null, keyIndex));
+          strip.appendChild(dial);
+        }
+        deck.appendChild(strip);
+      }
     }
 
     function renderInspector() {
@@ -1904,7 +2585,9 @@ export class PropertyInspectorServer {
       selectedContext = slot ? (slot.context || null) : null;
       var action = slot ? findAction(slot.pluginId, slot.actionId) : null;
       var isFolder = isFolderSlot(slot);
-      byId("selectedKeyLabel").textContent = selectedKeyIndex === null ? "" : "Key " + selectedKeyIndex;
+      byId("selectedKeyLabel").textContent = selectedKeyIndex === null
+        ? ""
+        : (isDialIndex(selectedKeyIndex) ? "Dial " + (dialIndexFromKey(selectedKeyIndex) + 1) : "Key " + selectedKeyIndex);
       byId("tileAction").textContent = slot ? displayActionName(slot) : "Empty";
       byId("tilePlugin").textContent = slot ? displayPluginName(slot) : "-";
       byId("tileContext").textContent = slot ? slot.context : "-";
@@ -2221,6 +2904,9 @@ export class PropertyInspectorServer {
     async function assignAction(action, keyIndex) {
       var targetKeyIndex = typeof keyIndex === "number" ? keyIndex : selectedKeyIndex;
       if (!action || targetKeyIndex === null) return;
+      if (!actionSupportsKey(action, targetKeyIndex)) {
+        throw new Error("Action does not support " + (isDialIndex(targetKeyIndex) ? "Encoder" : "Keypad"));
+      }
       selectedKeyIndex = targetKeyIndex;
       var response = await fetch(apiUrl("/api/slots"), {
         method: "POST",
@@ -2252,6 +2938,136 @@ export class PropertyInspectorServer {
       var response = await fetch(url, { method: "DELETE" });
       state = await response.json();
       closePI();
+      render();
+    }
+
+    async function selectDevice(deviceId) {
+      if (!deviceId || !state || deviceId === state.primaryDeviceId) return;
+      var response = await fetch(apiUrl("/api/device/select"), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ deviceId: deviceId })
+      });
+      if (!response.ok) {
+        var message = await response.text();
+        throw new Error(message || "Device select failed");
+      }
+      state = await response.json();
+      selectedKeyIndex = null;
+      selectedContext = null;
+      closePI();
+      render();
+    }
+
+    async function sendDialRotate(dialIndex, ticks) {
+      var response = await fetch(apiUrl("/api/dials/rotate"), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ deviceId: state.primaryDeviceId, dialIndex: dialIndex, ticks: ticks })
+      });
+      if (!response.ok) {
+        var message = await response.text();
+        throw new Error(message || "Dial rotate failed");
+      }
+    }
+
+    async function sendDialPress(dialIndex) {
+      var response = await fetch(apiUrl("/api/dials/press"), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ deviceId: state.primaryDeviceId, dialIndex: dialIndex })
+      });
+      if (!response.ok) {
+        var message = await response.text();
+        throw new Error(message || "Dial press failed");
+      }
+    }
+
+    async function sendDialTouch(dialIndex) {
+      var response = await fetch(apiUrl("/api/dials/touch"), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ deviceId: state.primaryDeviceId, dialIndex: dialIndex, hold: false, tapPos: [dialIndex * 200 + 100, 50] })
+      });
+      if (!response.ok) {
+        var message = await response.text();
+        throw new Error(message || "Dial touch failed");
+      }
+    }
+
+    async function installPlugin() {
+      var input = byId("pluginPathInput");
+      var sourcePath = input.value.trim();
+      if (!sourcePath) return;
+      setPluginInstallBusy(true);
+      try {
+        var response = await fetch(apiUrl("/api/plugins/install"), {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ path: sourcePath })
+        });
+        if (!response.ok) {
+          var message = await response.text();
+          throw new Error(message || "Plugin install failed");
+        }
+        state = await response.json();
+        input.value = "";
+        render();
+      } finally {
+        setPluginInstallBusy(false);
+      }
+    }
+
+    function setPluginInstallBusy(busy) {
+      byId("installPluginBtn").disabled = busy;
+      byId("choosePluginBtn").disabled = busy;
+      byId("pluginDropzone").classList.toggle("busy", busy);
+      byId("pluginDropzone").querySelector(".plugin-drop-main").textContent = busy ? "Installing..." : "Drop plugin package";
+    }
+
+    async function uploadPluginFile(file) {
+      if (!file) return;
+      if (!file.name.endsWith(".streamDeckPlugin") && !file.name.endsWith(".zip")) {
+        throw new Error("Expected .streamDeckPlugin or .zip file");
+      }
+      setPluginInstallBusy(true);
+      var url = apiUrl("/api/plugins/upload");
+      url.searchParams.set("filename", file.name);
+      try {
+        var response = await fetch(url, {
+          method: "POST",
+          headers: { "Content-Type": "application/octet-stream" },
+          body: file
+        });
+        if (!response.ok) {
+          var message = await response.text();
+          throw new Error(message || "Plugin upload failed");
+        }
+        state = await response.json();
+        render();
+      } finally {
+        setPluginInstallBusy(false);
+        byId("pluginFileInput").value = "";
+      }
+    }
+
+    async function uninstallPlugin(pluginId) {
+      if (!pluginId) return;
+      var response = await fetch(apiUrl("/api/plugins/uninstall"), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ pluginId: pluginId })
+      });
+      if (!response.ok) {
+        var message = await response.text();
+        throw new Error(message || "Plugin remove failed");
+      }
+      state = await response.json();
+      if (selectedSlot() && selectedSlot().pluginId === pluginId) {
+        selectedKeyIndex = null;
+        selectedContext = null;
+        closePI();
+      }
       render();
     }
 
@@ -2495,11 +3311,27 @@ export class PropertyInspectorServer {
       debugPI("closePI", { seq: piSwitchSeq });
     }
 
+    function openPreferences() {
+      byId("preferencesPanel").classList.add("open");
+      byId("preferencesPanel").setAttribute("aria-hidden", "false");
+      renderPlugins();
+    }
+
+    function closePreferences() {
+      byId("preferencesPanel").classList.remove("open");
+      byId("preferencesPanel").setAttribute("aria-hidden", "true");
+    }
+
     byId("actionSearch").addEventListener("input", function(event) {
       searchValue = event.target.value;
       renderActions();
     });
     byId("addPageBtn").addEventListener("click", function() { addPage(state ? state.activePage : undefined); });
+    byId("deviceSelect").addEventListener("change", function(event) {
+      selectDevice(event.target.value).catch(function(err) {
+        showError(err.message || String(err));
+      });
+    });
     byId("backBtn").addEventListener("click", function() {
       exitFolder().catch(function(err) {
         showError(err.message || String(err));
@@ -2552,6 +3384,48 @@ export class PropertyInspectorServer {
     byId("assignBtn").addEventListener("click", assignSelectedAction);
     byId("clearBtn").addEventListener("click", clearSelectedTile);
     byId("openPiBtn").addEventListener("click", openSelectedPI);
+    byId("preferencesBtn").addEventListener("click", openPreferences);
+    byId("closePreferencesBtn").addEventListener("click", closePreferences);
+    byId("preferencesPanel").addEventListener("click", function(event) {
+      if (event.target === event.currentTarget) closePreferences();
+    });
+    byId("installPluginBtn").addEventListener("click", function() {
+      installPlugin().catch(function(err) {
+        showError(err.message || String(err));
+      });
+    });
+    byId("choosePluginBtn").addEventListener("click", function() {
+      byId("pluginFileInput").click();
+    });
+    byId("pluginFileInput").addEventListener("change", function(event) {
+      var file = event.target.files && event.target.files[0];
+      uploadPluginFile(file).catch(function(err) {
+        showError(err.message || String(err));
+      });
+    });
+    byId("pluginDropzone").addEventListener("dragover", function(event) {
+      event.preventDefault();
+      event.currentTarget.classList.add("drag-over");
+      if (event.dataTransfer) event.dataTransfer.dropEffect = "copy";
+    });
+    byId("pluginDropzone").addEventListener("dragleave", function(event) {
+      event.currentTarget.classList.remove("drag-over");
+    });
+    byId("pluginDropzone").addEventListener("drop", function(event) {
+      event.preventDefault();
+      event.currentTarget.classList.remove("drag-over");
+      var file = event.dataTransfer && event.dataTransfer.files && event.dataTransfer.files[0];
+      uploadPluginFile(file).catch(function(err) {
+        showError(err.message || String(err));
+      });
+    });
+    byId("pluginPathInput").addEventListener("keydown", function(event) {
+      if (event.key !== "Enter") return;
+      event.preventDefault();
+      installPlugin().catch(function(err) {
+        showError(err.message || String(err));
+      });
+    });
     byId("closePiBtn").addEventListener("click", closePI);
     byId("menuOpenPiBtn").addEventListener("click", openContextMenuPI);
     byId("menuCopyBtn").addEventListener("click", copyContextMenuTile);
@@ -2575,6 +3449,10 @@ export class PropertyInspectorServer {
     window.addEventListener("resize", function() { closeTileMenu(); closePageMenu(); });
     window.addEventListener("scroll", closeTileMenu, true);
     window.addEventListener("keydown", function(event) {
+      if (event.key === "Escape" && byId("preferencesPanel").classList.contains("open")) {
+        closePreferences();
+        return;
+      }
       if ((event.key === "Delete" || event.key === "Backspace") && selectedSlot()) {
         clearSelectedTile();
       }

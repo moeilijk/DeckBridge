@@ -55,7 +55,8 @@ Ondersteunde modellen (via Julusian library):
 
 De WebSocket server waarnaar plugins verbinding maken.
 
-- Één server op een dynamisch gekozen poort
+- Één server op een vaste lokale poort: standaard `37685`, overschrijfbaar met
+  `DECKBRIDGE_WS_PORT`
 - Alle plugins verbinden op dezelfde poort — routing via UUID
 - Implementeert het volledige Elgato WebSocket SDK protocol
 - Handelt zowel plugin backend als Property Inspector verbindingen af
@@ -65,6 +66,9 @@ De WebSocket server waarnaar plugins verbinding maken.
 Start en beheert plugin processen.
 
 - Scant de plugin directory voor `*.sdPlugin` mappen
+- Installeert `.streamDeckPlugin`/`.zip` bundels en `.sdPlugin` mappen naar
+  `~/.config/DeckBridge/plugins/`
+- Verwijdert plugins en stopt bijbehorende child processes
 - Leest `manifest.json` per plugin
 - **Node.js plugins:** `spawn('node', [codePath, '-port', port, '-pluginUUID', uuid, '-registerEvent', 'registerPlugin', '-info', infoJson])`
 - **.exe plugins:** `spawn('wine', [exePath, '-port', port, ...])`
@@ -84,8 +88,13 @@ Serveert de lokale dashboard UI en Property Inspector bestanden.
 
 - Dashboard endpoint: `/dashboard?wsPort=<ws-port>`
 - State endpoint: `/api/state?wsPort=<ws-port>`
+- HTTP/PI draait standaard op vaste poort `34075`, overschrijfbaar met
+  `DECKBRIDGE_PI_PORT`
 - Mutaties: `POST /api/slots` voor toewijzen, `DELETE /api/slots` voor
   verwijderen
+- Pluginbeheer: `POST /api/plugins/install` en
+  `POST /api/plugins/uninstall`; `POST /api/plugins/upload` accepteert een
+  gekozen of gedropt pluginpakket vanuit de dashboard UI
 - Injecteert een Stream Deck-achtige bootstrap in Property Inspector HTML zodat
   plugin-PI's via dezelfde WebSocket server kunnen registreren
 - Publiceert acties uit plugin manifests als action library voor de UI

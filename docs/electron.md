@@ -52,8 +52,13 @@ De daemon blijft eigenaar van:
 Electron leest stdout van de daemon. Zodra de daemon dit print:
 
 ```text
-Dashboard: http://127.0.0.1:<pi-port>/dashboard?wsPort=<ws-port>
+Dashboard: http://127.0.0.1:34075/dashboard?wsPort=37685
 ```
+
+De core gebruikt standaard vaste poorten: `34075` voor HTTP/PI en `37685` voor
+de plugin-WebSocket. Deze zijn overschrijfbaar met `DECKBRIDGE_PI_PORT` en
+`DECKBRIDGE_WS_PORT`. Bezet betekent fout; er is geen automatische fallback naar
+een willekeurige poort.
 
 laadt Electron die URL in de `BrowserWindow`.
 

@@ -311,6 +311,23 @@ export class ProfileManager {
     map.delete(key)
   }
 
+  removeSlotsForPlugin(pluginId: string): number {
+    let removed = 0
+    this.pushHistory()
+    this._pauseHistory = true
+    for (let pageIndex = 0; pageIndex < this.pages.length; pageIndex++) {
+      removed += this.removeSlotsForPluginFromMap(this.pages[pageIndex].slots, pageIndex, pluginId)
+      for (const folderMap of this.pages[pageIndex].folders.values()) {
+        removed += this.removeSlotsForPluginFromMap(folderMap, pageIndex, pluginId)
+      }
+    }
+    this._pauseHistory = false
+    if (removed === 0) {
+      this.undoStack.pop()
+    }
+    return removed
+  }
+
   createSlot(deviceId: string, keyIndex: number, pluginId: string, actionId: string, settings: Record<string, unknown> = {}): ButtonSlot {
     const slot: ButtonSlot = { pluginId, actionId, context: randomUUID(), settings, state: 0 }
     this.setSlot(deviceId, keyIndex, slot)
@@ -429,6 +446,21 @@ export class ProfileManager {
     }
     page.folders.delete(folderId)
     this.navStack = this.navStack.filter((entry) => entry.folderId !== folderId)
+  }
+
+  private removeSlotsForPluginFromMap(map: Map<string, ButtonSlot>, pageIndex: number, pluginId: string): number {
+    let removed = 0
+    for (const [key, slot] of Array.from(map.entries())) {
+      if (slot.pluginId !== pluginId) continue
+      this.contextIndex.delete(slot.context)
+      if (slot.pluginId === 'com.deckbridge.system' && slot.actionId === 'com.deckbridge.system.folder') {
+        const folderId = typeof slot.settings.folderId === 'string' ? slot.settings.folderId : undefined
+        if (folderId) this.removeFolderTree(pageIndex, folderId)
+      }
+      map.delete(key)
+      removed++
+    }
+    return removed
   }
 }
 

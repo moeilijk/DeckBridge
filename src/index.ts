@@ -27,7 +27,22 @@ function keyImageId(deviceId: string, keyIndex: number): string {
   return JSON.stringify([deviceId, keyIndex])
 }
 
+const ENCODER_BASE_INDEX = 1000
+
+function isEncoderIndex(keyIndex: number): boolean {
+  return keyIndex >= ENCODER_BASE_INDEX
+}
+
+function encoderIndex(keyIndex: number): number {
+  return keyIndex - ENCODER_BASE_INDEX
+}
+
+function getController(keyIndex: number): 'Encoder' | 'Keypad' {
+  return isEncoderIndex(keyIndex) ? 'Encoder' : 'Keypad'
+}
+
 function getCoords(deviceId: string, keyIndex: number, deviceManager: DeviceManager) {
+  if (isEncoderIndex(keyIndex)) return { column: encoderIndex(keyIndex), row: 0 }
   const cols = deviceManager.getColumns(deviceId)
   return { column: keyIndex % cols, row: Math.floor(keyIndex / cols) }
 }
@@ -40,6 +55,7 @@ async function main() {
   const piServer = new PropertyInspectorServer()
   const loggedSetImageContexts = new Set<string>()
   const keyImages = new Map<string, string>()
+  const encoderFeedback = new Map<string, { layout?: string; imageDataUrl?: string; title?: string; value?: string; indicator?: unknown }>()
   const debugPI = process.env.DECKBRIDGE_DEBUG_PI === '1'
 
   const SYSTEM_PLUGIN = 'com.deckbridge.system'
@@ -52,6 +68,18 @@ async function main() {
   await deviceManager.start()
   await deviceManager.clearAll()
   await profileManager.load()
+
+  function preferredDeviceId(deviceIds: string[], fallback: string): string {
+    const requestedProfile = (process.env.DECKBRIDGE_DEVICE_PROFILE ?? '').trim().toLowerCase()
+    const requestedId = requestedProfile === 'streamdeck-plus'
+      ? 'deckbridge-plus-0'
+      : requestedProfile === 'streamdeck-xl'
+        ? 'deckbridge-xl-0'
+        : ''
+    return requestedId && deviceIds.includes(requestedId)
+      ? requestedId
+      : (deviceIds[0] ?? fallback)
+  }
 
   // --- Device settings (brightness) ---
   const configDir = join(homedir(), '.config', 'DeckBridge')
@@ -70,9 +98,10 @@ async function main() {
 
   // Sync nav buttons: prevpage only on pages >0, nextpage only on pages <last
   let profileDirty = false
-  const primaryId = deviceManager.getDeviceIds()[0] ?? 'deckbridge-xl-0'
-  const keysPerPage = deviceManager.getDeviceIds()[0]
-    ? deviceManager.getColumns(deviceManager.getDeviceIds()[0]) * (deviceManager.getRows?.(deviceManager.getDeviceIds()[0]) ?? 4)
+  const startupDeviceIds = deviceManager.getDeviceIds()
+  const primaryId = preferredDeviceId(startupDeviceIds, 'deckbridge-xl-0')
+  const keysPerPage = startupDeviceIds.includes(primaryId)
+    ? deviceManager.getColumns(primaryId) * (deviceManager.getRows?.(primaryId) ?? 4)
     : 32
   const NAV_KEY_NEXT = keysPerPage - 1
   const NAV_KEY_PREV = keysPerPage - 2
@@ -139,6 +168,12 @@ async function main() {
 
   function clearKeyImage(deviceId: string, keyIndex: number): void {
     keyImages.delete(keyImageId(deviceId, keyIndex))
+    encoderFeedback.delete(keyImageId(deviceId, keyIndex))
+  }
+
+  function clearAllDisplayState(): void {
+    keyImages.clear()
+    encoderFeedback.clear()
   }
 
   function getSlotState(slot: ButtonSlot): number {
@@ -223,7 +258,7 @@ async function main() {
 
   async function renderCurrentView(clearPanel: boolean): Promise<void> {
     if (clearPanel) {
-      keyImages.clear()
+      clearAllDisplayState()
       await deviceManager.clearAll()
     }
     for (const { deviceId, keyIndex, slot } of profileManager.getAllSlots()) {
@@ -285,6 +320,7 @@ async function main() {
       device: deviceId,
       payload: {
         settings: slot.settings,
+        controller: getController(keyIndex),
         coordinates: getCoords(deviceId, keyIndex, deviceManager),
         state: getSlotState(slot),
         isInMultiAction: false,
@@ -302,6 +338,7 @@ async function main() {
       device: deviceId,
       payload: {
         settings: slot.settings,
+        controller: getController(keyIndex),
         coordinates: getCoords(deviceId, keyIndex, deviceManager),
         state: getSlotState(slot),
         isInMultiAction: false,
@@ -325,9 +362,9 @@ async function main() {
   function deviceEventPayload(deviceId: string): Record<string, unknown> {
     return {
       id: deviceId,
-      name: 'Stream Deck',
+      name: deviceManager.getDeviceName(deviceId),
       size: { columns: deviceManager.getColumns(deviceId), rows: deviceManager.getRows(deviceId) },
-      type: 2,
+      type: deviceManager.getDeviceType(deviceId),
     }
   }
 
@@ -481,6 +518,7 @@ async function main() {
       device: e.deviceId,
       payload: {
         settings: slot.settings,
+        controller: 'Keypad',
         coordinates: getCoords(e.deviceId, e.keyIndex, deviceManager),
         state: getSlotState(slot),
         userDesiredState: getSlotState(slot),
@@ -501,6 +539,7 @@ async function main() {
       device: e.deviceId,
       payload: {
         settings: slot.settings,
+        controller: 'Keypad',
         coordinates: getCoords(e.deviceId, e.keyIndex, deviceManager),
         state: getSlotState(slot),
         isInMultiAction: false,
@@ -637,6 +676,41 @@ async function main() {
         break
       }
 
+      case 'setFeedbackLayout': {
+        if (!context) break
+        const loc = profileManager.getSlotByContext(context)
+        if (!loc || !isEncoderIndex(loc.keyIndex)) break
+        const layout = typeof payload.layout === 'string' ? payload.layout : undefined
+        const key = keyImageId(loc.deviceId, loc.keyIndex)
+        encoderFeedback.set(key, { ...(encoderFeedback.get(key) ?? {}), layout })
+        break
+      }
+
+      case 'setFeedback': {
+        if (!context) break
+        const loc = profileManager.getSlotByContext(context)
+        if (!loc || !isEncoderIndex(loc.keyIndex)) break
+        const key = keyImageId(loc.deviceId, loc.keyIndex)
+        const previous = encoderFeedback.get(key) ?? {}
+        const imageDataUrl = typeof payload['full-canvas'] === 'string'
+          ? payload['full-canvas'] as string
+          : typeof payload.image === 'string'
+            ? payload.image as string
+            : previous.imageDataUrl
+        encoderFeedback.set(key, {
+          ...previous,
+          imageDataUrl,
+          title: typeof payload.title === 'string' ? payload.title : previous.title,
+          value: typeof payload.value === 'string' ? payload.value : previous.value,
+          indicator: payload.indicator ?? previous.indicator,
+        })
+        break
+      }
+
+      case 'setTriggerDescription': {
+        break
+      }
+
       case 'setState': {
         if (!context) break
         const loc = profileManager.getSlotByContext(context)
@@ -670,6 +744,7 @@ async function main() {
           device: loc.deviceId,
           payload: {
             settings: loc.slot.settings,
+            controller: getController(loc.keyIndex),
             coordinates: getCoords(loc.deviceId, loc.keyIndex, deviceManager),
           },
         }
@@ -691,6 +766,7 @@ async function main() {
           device: loc.deviceId,
           payload: {
             settings: loc.slot.settings,
+            controller: getController(loc.keyIndex),
             coordinates: getCoords(loc.deviceId, loc.keyIndex, deviceManager),
           },
         })
@@ -787,7 +863,7 @@ async function main() {
           for (const s of oldSlots) {
             if (s.slot.pluginId !== SYSTEM_PLUGIN) sendWillDisappear(s.deviceId, s.keyIndex, s.slot)
           }
-          keyImages.clear()
+          clearAllDisplayState()
           await renderCurrentView(true)
           const pageValue: unknown = payload.pageNumber ?? payload.page
           if (typeof pageValue === 'number' && Number.isInteger(pageValue)) {
@@ -818,21 +894,34 @@ async function main() {
   // ── Plugin laden ─────────────────────────────────────────────────────────────
 
   const deviceIds = deviceManager.getDeviceIds()
-  const deviceInfo = {
-    id: deviceIds[0] ?? 'deckbridge-xl-0',
-    name: 'Stream Deck XL',
+  const fallbackDeviceId = 'deckbridge-xl-0'
+  const initialDeviceId = preferredDeviceId(deviceIds, fallbackDeviceId)
+  let activeDeviceId = initialDeviceId
+  const deviceInfoFor = (id: string) => ({
+    id,
+    name: deviceManager.getDeviceName(id),
     size: {
-      columns: deviceIds[0] ? deviceManager.getColumns(deviceIds[0]) : 8,
-      rows: deviceIds[0] ? deviceManager.getRows(deviceIds[0]) : 4,
+      columns: deviceManager.getColumns(id),
+      rows: deviceManager.getRows(id),
     },
-    type: 2,
+    type: deviceManager.getDeviceType(id),
+    dials: deviceManager.getDialCount(id),
+  })
+  const deviceInfos = deviceIds.length > 0
+    ? deviceIds.map(deviceInfoFor)
+    : [{
+        id: fallbackDeviceId,
+        name: 'Stream Deck XL',
+        size: { columns: 8, rows: 4 },
+        type: 2,
+      }]
+
+  function getActiveDeviceId(): string {
+    return activeDeviceId
   }
 
   // Wire up dashboard providers
-  const primaryDeviceId = deviceIds[0] ?? 'deckbridge-xl-0'
-  const cols = deviceIds[0] ? deviceManager.getColumns(deviceIds[0]) : 8
-  const rows = deviceIds[0] ? deviceManager.getRows(deviceIds[0]) : 4
-  const totalKeys = deviceIds[0] ? deviceManager.getButtonCount(deviceIds[0]) : cols * rows
+  const primaryDeviceId = initialDeviceId
 
   piServer.setSlotProvider(() =>
     profileManager.getAllSlots().map(({ deviceId, keyIndex, slot }) => ({
@@ -845,14 +934,45 @@ async function main() {
       state:      getSlotState(slot),
       piFile:     pluginManager.getPiPath(slot.pluginId, slot.actionId),
       imageDataUrl: keyImages.get(keyImageId(deviceId, keyIndex)),
+      feedback:   encoderFeedback.get(keyImageId(deviceId, keyIndex)),
       isSystem:   isImmutableSystemSlot(slot),
     }))
   )
   piServer.setActionProvider(() => pluginManager.getActions())
-  piServer.setPrimaryDeviceProvider(() => deviceManager.getDeviceIds()[0] ?? primaryDeviceId)
-  piServer.setLayoutProvider(() => ({ columns: cols, rows, totalKeys }))
+  piServer.setInstalledPluginProvider(() => pluginManager.getInstalledPlugins())
+  piServer.setPrimaryDeviceProvider(() => getActiveDeviceId())
+  piServer.setDevicesProvider(() => {
+    const ids = deviceManager.getDeviceIds()
+    if (ids.length === 0) {
+      return [{ id: fallbackDeviceId, name: 'Stream Deck XL', model: 'streamdeck-xl', type: 2, columns: 8, rows: 4, totalKeys: 32 }]
+    }
+    return ids.map((id) => ({
+      id,
+      name: deviceManager.getDeviceName(id),
+      model: deviceManager.getDeviceModel(id),
+      type: deviceManager.getDeviceType(id),
+      columns: deviceManager.getColumns(id),
+      rows: deviceManager.getRows(id),
+      totalKeys: deviceManager.getButtonCount(id),
+      dials: deviceManager.getDialCount(id),
+    }))
+  })
+  piServer.setDeviceSelectionHandler((deviceId: string) => {
+    if (!deviceManager.getDeviceIds().includes(deviceId)) return
+    activeDeviceId = deviceId
+  })
+  piServer.setLayoutProvider(() => {
+    const id = getActiveDeviceId()
+    const columns = deviceManager.getColumns(id)
+    const rows = deviceManager.getRows(id)
+    return { columns, rows, totalKeys: deviceManager.getButtonCount(id) || columns * rows }
+  })
   piServer.setSlotMutationHandlers({
     assign: async ({ deviceId, keyIndex, pluginId, actionId, settings }) => {
+      const controller = getController(keyIndex)
+      if (!pluginManager.actionSupportsController(pluginId, actionId, controller)) {
+        throw new Error(`Action ${actionId} does not support ${controller}`)
+      }
       const existing = profileManager.getSlot(deviceId, keyIndex)
       if (existing?.pluginId === pluginId && existing.actionId === actionId) return
       if (existing) sendWillDisappear(deviceId, keyIndex, existing)
@@ -885,6 +1005,8 @@ async function main() {
       const targetImageKey = keyImageId(targetDeviceId, targetKeyIndex)
       const sourceImage = keyImages.get(sourceImageKey)
       const targetImage = keyImages.get(targetImageKey)
+      const sourceFeedback = encoderFeedback.get(sourceImageKey)
+      const targetFeedback = encoderFeedback.get(targetImageKey)
 
       sendWillDisappear(sourceDeviceId, sourceKeyIndex, sourceSlot)
       if (targetSlot) sendWillDisappear(targetDeviceId, targetKeyIndex, targetSlot)
@@ -894,9 +1016,13 @@ async function main() {
 
       if (sourceImage) keyImages.set(targetImageKey, sourceImage)
       else keyImages.delete(targetImageKey)
+      if (sourceFeedback) encoderFeedback.set(targetImageKey, sourceFeedback)
+      else encoderFeedback.delete(targetImageKey)
 
       if (targetSlot && targetImage) keyImages.set(sourceImageKey, targetImage)
       else keyImages.delete(sourceImageKey)
+      if (targetSlot && targetFeedback) encoderFeedback.set(sourceImageKey, targetFeedback)
+      else encoderFeedback.delete(sourceImageKey)
 
       await profileManager.save()
       await applyCachedKeyImages([
@@ -1015,12 +1141,12 @@ async function main() {
   piServer.setUndoRedoHandlers({
     undo: async () => {
       const ok = profileManager.undo()
-      if (ok) { keyImages.clear(); await renderCurrentView(true) }
+      if (ok) { clearAllDisplayState(); await renderCurrentView(true) }
       return ok
     },
     redo: async () => {
       const ok = profileManager.redo()
-      if (ok) { keyImages.clear(); await renderCurrentView(true) }
+      if (ok) { clearAllDisplayState(); await renderCurrentView(true) }
       return ok
     },
     state: () => ({ canUndo: profileManager.canUndo(), canRedo: profileManager.canRedo() }),
@@ -1035,7 +1161,87 @@ async function main() {
     get: (deviceId: string) => deviceManager.getBrightness(deviceId),
   })
 
-  await pluginManager.loadPlugins(pluginDir, pluginServer.getPort(), deviceInfo)
+  piServer.setDialHandlers({
+    rotate: ({ deviceId, dialIndex, ticks = 1, pressed = false }) => {
+      const keyIndex = ENCODER_BASE_INDEX + dialIndex
+      const slot = profileManager.getSlot(deviceId, keyIndex)
+      if (!slot) return
+      const pluginUUID = pluginManager.getPluginUUID(slot.pluginId)
+      if (!pluginUUID) return
+      pluginServer.sendToPlugin(pluginUUID, {
+        event: 'dialRotate',
+        action: slot.actionId,
+        context: slot.context,
+        device: deviceId,
+        payload: {
+          settings: slot.settings,
+          controller: 'Encoder',
+          coordinates: getCoords(deviceId, keyIndex, deviceManager),
+          ticks,
+          pressed,
+        },
+      })
+    },
+    press: ({ deviceId, dialIndex }) => {
+      const keyIndex = ENCODER_BASE_INDEX + dialIndex
+      const slot = profileManager.getSlot(deviceId, keyIndex)
+      if (!slot) return
+      const pluginUUID = pluginManager.getPluginUUID(slot.pluginId)
+      if (!pluginUUID) return
+      const basePayload = {
+        action: slot.actionId,
+        context: slot.context,
+        device: deviceId,
+        payload: {
+          settings: slot.settings,
+          controller: 'Encoder',
+          coordinates: getCoords(deviceId, keyIndex, deviceManager),
+        },
+      }
+      pluginServer.sendToPlugin(pluginUUID, { ...basePayload, event: 'dialDown' })
+      pluginServer.sendToPlugin(pluginUUID, { ...basePayload, event: 'dialUp' })
+    },
+    touch: ({ deviceId, dialIndex, hold = false, tapPos }) => {
+      const keyIndex = ENCODER_BASE_INDEX + dialIndex
+      const slot = profileManager.getSlot(deviceId, keyIndex)
+      if (!slot) return
+      const pluginUUID = pluginManager.getPluginUUID(slot.pluginId)
+      if (!pluginUUID) return
+      pluginServer.sendToPlugin(pluginUUID, {
+        event: 'touchTap',
+        action: slot.actionId,
+        context: slot.context,
+        device: deviceId,
+        payload: {
+          settings: slot.settings,
+          controller: 'Encoder',
+          coordinates: getCoords(deviceId, keyIndex, deviceManager),
+          hold,
+          tapPos: tapPos ?? [dialIndex * 200 + 100, 50],
+        },
+      })
+    },
+  })
+
+  piServer.setPluginManagementHandlers({
+    install: async (sourcePath: string) => {
+      await pluginManager.installPlugin(sourcePath, pluginDir, pluginServer.getPort(), deviceInfos)
+    },
+    uninstall: async (pluginId: string) => {
+      for (const { deviceId, keyIndex, slot } of profileManager.getAllSlots()) {
+        if (slot.pluginId === pluginId) sendWillDisappear(deviceId, keyIndex, slot)
+      }
+      await pluginManager.uninstallPlugin(pluginId)
+      const removed = profileManager.removeSlotsForPlugin(pluginId)
+      if (removed > 0) {
+        clearAllDisplayState()
+        await profileManager.save()
+        await renderCurrentView(true)
+      }
+    },
+  })
+
+  await pluginManager.loadPlugins(pluginDir, pluginServer.getPort(), deviceInfos)
 
   const appMonitor = createApplicationMonitor()
 

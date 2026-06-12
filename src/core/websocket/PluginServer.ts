@@ -14,6 +14,7 @@ export class PluginServer extends EventEmitter {
   private piByContext = new Map<string, PluginClient>()  // context UUID → PI
   private port: number = 0
   private readonly debugPI: boolean = process.env.DECKBRIDGE_DEBUG_PI === '1'
+  private readonly preferredPort: number = Number(process.env.DECKBRIDGE_WS_PORT ?? 37685)
 
   private logPIDebug(source: string, payload: unknown): void {
     if (!this.debugPI) return
@@ -22,13 +23,19 @@ export class PluginServer extends EventEmitter {
   }
 
   async start(): Promise<void> {
-    await new Promise<void>((resolve) => {
-      this.wss = new WebSocketServer({ port: 0 }, () => {
+    const requestedPort = Number.isInteger(this.preferredPort) && this.preferredPort > 0 ? this.preferredPort : 37685
+    await this.listenOnPort(requestedPort)
+  }
+
+  private async listenOnPort(port: number): Promise<void> {
+    await new Promise<void>((resolve, reject) => {
+      this.wss = new WebSocketServer({ port }, () => {
         const addr = this.wss!.address() as { port: number }
         this.port = addr.port
         console.log(`PluginServer luistert op poort ${this.port}`)
         resolve()
       })
+      this.wss.once('error', reject)
 
       this.wss.on('connection', (socket: WebSocket, _req: IncomingMessage) => {
         socket.once('message', (data) => this.handleRegistration(socket, data.toString()))
