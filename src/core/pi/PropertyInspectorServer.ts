@@ -1439,8 +1439,15 @@ export class PropertyInspectorServer {
       grid-column: 1 / -1;
       display: grid;
       grid-template-columns: repeat(4, minmax(0, 1fr));
-      gap: 10px;
+      gap: 4px;
       padding-top: 2px;
+    }
+    .dial-control-strip {
+      grid-column: 1 / -1;
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 10px;
+      padding-top: 0;
     }
     .key {
       position: relative;
@@ -1456,17 +1463,19 @@ export class PropertyInspectorServer {
       gap: 3px;
       text-align: left;
     }
-    .dial {
-      aspect-ratio: 1.45;
-      grid-template-rows: 18px minmax(0, 1fr) 30px;
+    .dial-display {
+      aspect-ratio: 2 / 1;
+      grid-template-rows: minmax(0, 1fr);
+      padding: 4px;
+      overflow: hidden;
+      background: #050606;
+      border-color: #2f3941;
     }
-    .dial.has-feedback {
-      grid-template-rows: minmax(0, 1fr) 30px;
+    .dial-display.selected {
+      border-color: var(--accent-2);
+      box-shadow: 0 0 0 2px rgba(58, 160, 255, .3);
     }
-    .dial.has-feedback .key-num {
-      display: none;
-    }
-    .dial .key-label {
+    .dial-display .key-label {
       min-height: 0;
       overflow: hidden;
     }
@@ -1477,6 +1486,27 @@ export class PropertyInspectorServer {
       display: block;
       background: #000;
       border-radius: 4px;
+    }
+    .dial-rotary {
+      min-width: 0;
+      padding: 8px;
+      border-radius: 8px;
+      border: 1px solid #323b44;
+      background: #111418;
+      display: grid;
+      grid-template-rows: 18px 30px;
+      gap: 6px;
+      cursor: pointer;
+    }
+    .dial-rotary.selected {
+      border-color: var(--accent-2);
+      box-shadow: 0 0 0 2px rgba(58, 160, 255, .3);
+    }
+    .dial-rotary-label {
+      color: var(--muted);
+      font-size: 11px;
+      line-height: 18px;
+      text-align: center;
     }
     .dial-controls {
       display: grid;
@@ -2535,22 +2565,19 @@ export class PropertyInspectorServer {
       if (dialCount > 0) {
         var strip = document.createElement("div");
         strip.className = "dial-strip";
+        var controlStrip = document.createElement("div");
+        controlStrip.className = "dial-control-strip";
         for (var d = 0; d < dialCount; d++) {
           var keyIndex = ENCODER_BASE_INDEX + d;
           var slot = slotForKey(keyIndex);
           var isMoving = draggingSlot && slot && draggingSlot.deviceId === slot.deviceId && draggingSlot.keyIndex === keyIndex;
           var hasFeedbackImage = slot && slot.feedback && typeof slot.feedback.imageDataUrl === "string" && slot.feedback.imageDataUrl.length > 0;
-          var dial = document.createElement("div");
-          dial.className = "key dial " + (slot ? "configured" : "empty") + (hasFeedbackImage ? " has-feedback" : "") + (isMoving ? " moving" : "") + (selectedKeyIndex === keyIndex ? " selected" : "");
-          dial.title = slot ? slot.actionId : "Empty dial";
-          dial.dataset.keyIndex = String(keyIndex);
-          dial.tabIndex = 0;
-          dial.setAttribute("role", "button");
-
-          var num = document.createElement("div");
-          num.className = "key-num";
-          num.textContent = "Dial " + (d + 1);
-          dial.appendChild(num);
+          var display = document.createElement("div");
+          display.className = "key dial-display " + (slot ? "configured" : "empty") + (hasFeedbackImage ? " has-feedback" : "") + (isMoving ? " moving" : "") + (selectedKeyIndex === keyIndex ? " selected" : "");
+          display.title = slot ? slot.actionId : "Empty dial display";
+          display.dataset.keyIndex = String(keyIndex);
+          display.tabIndex = 0;
+          display.setAttribute("role", "button");
 
           var label = document.createElement("div");
           label.className = "key-label";
@@ -2567,7 +2594,38 @@ export class PropertyInspectorServer {
                 : displayActionName(slot))
               : ((draggingActionKey || draggingSlot) ? "+" : "Empty");
           }
-          dial.appendChild(label);
+          display.appendChild(label);
+
+          display.addEventListener("click", activateKey.bind(null, keyIndex));
+          display.addEventListener("contextmenu", openTileMenu.bind(null, keyIndex));
+          display.addEventListener("pointerdown", handleTilePointerDown.bind(null, keyIndex));
+          display.addEventListener("pointermove", handleTilePointerMove);
+          display.addEventListener("pointerup", handleTilePointerUp);
+          display.addEventListener("pointercancel", cancelTilePointerDrag);
+          display.addEventListener("dragover", function(event) {
+            event.preventDefault();
+            closeTileMenu();
+            event.currentTarget.classList.add("drag-over");
+            if (event.dataTransfer) event.dataTransfer.dropEffect = "copy";
+          });
+          display.addEventListener("dragleave", function(event) {
+            event.currentTarget.classList.remove("drag-over");
+          });
+          display.addEventListener("drop", handleDrop.bind(null, keyIndex));
+          strip.appendChild(display);
+
+          var rotary = document.createElement("div");
+          rotary.className = "dial-rotary " + (slot ? "configured" : "empty") + (selectedKeyIndex === keyIndex ? " selected" : "");
+          rotary.title = slot ? slot.actionId : "Empty dial";
+          rotary.tabIndex = 0;
+          rotary.setAttribute("role", "button");
+          rotary.addEventListener("click", activateKey.bind(null, keyIndex));
+          rotary.addEventListener("contextmenu", openTileMenu.bind(null, keyIndex));
+
+          var rotaryLabel = document.createElement("div");
+          rotaryLabel.className = "dial-rotary-label";
+          rotaryLabel.textContent = "Dial " + (d + 1);
+          rotary.appendChild(rotaryLabel);
 
           var controls = document.createElement("div");
           controls.className = "dial-controls";
@@ -2621,27 +2679,11 @@ export class PropertyInspectorServer {
           controls.appendChild(press);
           controls.appendChild(touch);
           controls.appendChild(inc);
-          dial.appendChild(controls);
-
-          dial.addEventListener("click", activateKey.bind(null, keyIndex));
-          dial.addEventListener("contextmenu", openTileMenu.bind(null, keyIndex));
-          dial.addEventListener("pointerdown", handleTilePointerDown.bind(null, keyIndex));
-          dial.addEventListener("pointermove", handleTilePointerMove);
-          dial.addEventListener("pointerup", handleTilePointerUp);
-          dial.addEventListener("pointercancel", cancelTilePointerDrag);
-          dial.addEventListener("dragover", function(event) {
-            event.preventDefault();
-            closeTileMenu();
-            event.currentTarget.classList.add("drag-over");
-            if (event.dataTransfer) event.dataTransfer.dropEffect = "copy";
-          });
-          dial.addEventListener("dragleave", function(event) {
-            event.currentTarget.classList.remove("drag-over");
-          });
-          dial.addEventListener("drop", handleDrop.bind(null, keyIndex));
-          strip.appendChild(dial);
+          rotary.appendChild(controls);
+          controlStrip.appendChild(rotary);
         }
         deck.appendChild(strip);
+        deck.appendChild(controlStrip);
       }
     }
 
