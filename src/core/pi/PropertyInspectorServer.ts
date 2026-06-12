@@ -419,8 +419,17 @@ export class PropertyInspectorServer {
 
     if (url.pathname === '/api/images' && req.method === 'GET') {
       const images = (this.slotProvider?.() ?? [])
-        .filter(s => typeof s.imageDataUrl === 'string' && s.imageDataUrl.length > 0)
-        .map(s => ({ deviceId: s.deviceId, keyIndex: s.keyIndex, imageDataUrl: s.imageDataUrl }))
+        .filter(s => {
+          const hasKeyImage = typeof s.imageDataUrl === 'string' && s.imageDataUrl.length > 0
+          const hasFeedbackImage = typeof s.feedback?.imageDataUrl === 'string' && s.feedback.imageDataUrl.length > 0
+          return hasKeyImage || hasFeedbackImage
+        })
+        .map(s => ({
+          deviceId: s.deviceId,
+          keyIndex: s.keyIndex,
+          imageDataUrl: s.imageDataUrl,
+          feedbackImageDataUrl: s.feedback?.imageDataUrl,
+        }))
       this.sendJson(res, 200, images)
       return
     }
@@ -1451,13 +1460,19 @@ export class PropertyInspectorServer {
       aspect-ratio: 1.45;
       grid-template-rows: 18px minmax(0, 1fr) 30px;
     }
+    .dial.has-feedback {
+      grid-template-rows: minmax(0, 1fr) 30px;
+    }
+    .dial.has-feedback .key-num {
+      display: none;
+    }
     .dial .key-label {
       min-height: 0;
       overflow: hidden;
     }
     .dial-feedback-image {
       width: 100%;
-      aspect-ratio: 2 / 1;
+      height: 100%;
       object-fit: contain;
       display: block;
       background: #000;
@@ -2433,6 +2448,18 @@ export class PropertyInspectorServer {
         var key = keys[ki];
         var i = parseInt(key.dataset.keyIndex, 10);
         var entry = images.find(function(e) { return e.keyIndex === i && e.deviceId === state.primaryDeviceId; });
+        if (isDialIndex(i)) {
+          var newFeedbackSrc = entry ? entry.feedbackImageDataUrl : null;
+          var hasFeedbackImage = typeof newFeedbackSrc === "string" && newFeedbackSrc.length > 0;
+          var dialHadFeedback = key.classList.contains("has-feedback");
+          if (hasFeedbackImage !== dialHadFeedback) { renderDeck(); return; }
+          if (hasFeedbackImage) {
+            var feedbackImg = key.querySelector("img.dial-feedback-image");
+            if (!feedbackImg) { renderDeck(); return; }
+            if (feedbackImg.src !== newFeedbackSrc) { feedbackImg.src = newFeedbackSrc; }
+          }
+          continue;
+        }
         var newSrc = entry ? entry.imageDataUrl : null;
         var hasImage = typeof newSrc === "string" && newSrc.length > 0;
         var keyHadImage = key.classList.contains("has-image");
@@ -2512,8 +2539,9 @@ export class PropertyInspectorServer {
           var keyIndex = ENCODER_BASE_INDEX + d;
           var slot = slotForKey(keyIndex);
           var isMoving = draggingSlot && slot && draggingSlot.deviceId === slot.deviceId && draggingSlot.keyIndex === keyIndex;
+          var hasFeedbackImage = slot && slot.feedback && typeof slot.feedback.imageDataUrl === "string" && slot.feedback.imageDataUrl.length > 0;
           var dial = document.createElement("div");
-          dial.className = "key dial " + (slot ? "configured" : "empty") + (isMoving ? " moving" : "") + (selectedKeyIndex === keyIndex ? " selected" : "");
+          dial.className = "key dial " + (slot ? "configured" : "empty") + (hasFeedbackImage ? " has-feedback" : "") + (isMoving ? " moving" : "") + (selectedKeyIndex === keyIndex ? " selected" : "");
           dial.title = slot ? slot.actionId : "Empty dial";
           dial.dataset.keyIndex = String(keyIndex);
           dial.tabIndex = 0;
@@ -2526,7 +2554,7 @@ export class PropertyInspectorServer {
 
           var label = document.createElement("div");
           label.className = "key-label";
-          if (slot && slot.feedback && slot.feedback.imageDataUrl) {
+          if (hasFeedbackImage) {
             var feedbackImage = document.createElement("img");
             feedbackImage.src = slot.feedback.imageDataUrl;
             feedbackImage.alt = displayActionName(slot);
@@ -2543,11 +2571,21 @@ export class PropertyInspectorServer {
 
           var controls = document.createElement("div");
           controls.className = "dial-controls";
+          controls.addEventListener("pointerdown", function(event) {
+            event.stopPropagation();
+          });
+          controls.addEventListener("pointerup", function(event) {
+            event.stopPropagation();
+          });
+          controls.addEventListener("pointercancel", function(event) {
+            event.stopPropagation();
+          });
           var dec = document.createElement("button");
           dec.type = "button";
           dec.textContent = "-";
           dec.title = "Rotate left";
           dec.addEventListener("click", function(idx, event) {
+            event.preventDefault();
             event.stopPropagation();
             sendDialRotate(idx, -1).catch(function(err) { showError(err.message || String(err)); });
           }.bind(null, d));
@@ -2557,6 +2595,7 @@ export class PropertyInspectorServer {
           press.textContent = "Press";
           press.title = "Press dial";
           press.addEventListener("click", function(idx, event) {
+            event.preventDefault();
             event.stopPropagation();
             sendDialPress(idx).catch(function(err) { showError(err.message || String(err)); });
           }.bind(null, d));
@@ -2565,6 +2604,7 @@ export class PropertyInspectorServer {
           touch.textContent = "Touch";
           touch.title = "Touch dial screen";
           touch.addEventListener("click", function(idx, event) {
+            event.preventDefault();
             event.stopPropagation();
             sendDialTouch(idx).catch(function(err) { showError(err.message || String(err)); });
           }.bind(null, d));
@@ -2573,6 +2613,7 @@ export class PropertyInspectorServer {
           inc.textContent = "+";
           inc.title = "Rotate right";
           inc.addEventListener("click", function(idx, event) {
+            event.preventDefault();
             event.stopPropagation();
             sendDialRotate(idx, 1).catch(function(err) { showError(err.message || String(err)); });
           }.bind(null, d));
