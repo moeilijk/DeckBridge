@@ -768,7 +768,8 @@ async function main() {
         if (!Number.isInteger(nextState) || nextState < 0) break
         if (loc.slot.state === nextState) break
         loc.slot.state = nextState
-        profileManager.save().catch(console.error)
+        profileManager.setSlot(loc.deviceId, loc.keyIndex, loc.slot)
+        await profileManager.save()
         clearKeyImage(loc.deviceId, loc.keyIndex)
         if (isCurrentViewLocation(loc)) {
           await renderDefaultIcon(loc.deviceId, loc.keyIndex, loc.slot)
@@ -784,7 +785,7 @@ async function main() {
         if (!loc) break
         loc.slot.settings = payload
         profileManager.setSlot(loc.deviceId, loc.keyIndex, loc.slot)
-        profileManager.save().catch(console.error)
+        await profileManager.save()
         const targetUUID = pluginManager.getPluginUUID(loc.slot.pluginId)
         const didReceiveSettings = {
           event: 'didReceiveSettings',
