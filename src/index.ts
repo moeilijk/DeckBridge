@@ -149,10 +149,13 @@ async function main() {
 
   syncNavButtons()
   if (profileDirty) await profileManager.save()
-  await pluginServer.start()
 
+  // Start the HTTP/PI server first, then attach the plugin WebSocket to the same
+  // HTTP server so both share one port (the dashboard port). WSL2 only forwards
+  // that port to Windows reliably; a separate WS port stays unreachable.
   const pluginDir = join(homedir(), '.config', 'DeckBridge', 'plugins')
   await piServer.start(pluginDir)
+  await pluginServer.start(piServer.getHttpServer() ?? undefined)
 
   function sendToSender(senderUUID: string, senderType: string, payload: Record<string, unknown>): void {
     if (senderType === 'propertyInspector') {

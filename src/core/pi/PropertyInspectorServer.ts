@@ -354,6 +354,10 @@ export class PropertyInspectorServer {
     return this.port
   }
 
+  getHttpServer(): Server | null {
+    return this.server
+  }
+
   getDashboardUrl(): string {
     return `http://127.0.0.1:${this.port}/dashboard`
   }
@@ -1078,7 +1082,10 @@ export class PropertyInspectorServer {
   }
 
   private serveDashboard(res: ServerResponse, url: URL): void {
-    const wsPort = JSON.stringify(url.searchParams.get('wsPort') ?? '')
+    // The plugin WS shares this HTTP server's port, so always use our own port
+    // regardless of any stale ?wsPort= in the URL the browser still has.
+    const wsPort = JSON.stringify(String(this.port))
+    void url
     const debugPI = this.debugPI ? 'true' : 'false'
     const html = `<!DOCTYPE html>
 <html>
@@ -1842,7 +1849,7 @@ export class PropertyInspectorServer {
     <section class="workspace">
       <div class="header">
         <div>
-          <div class="brand">DeckBridge</div>
+          <div class="brand">DeckBridge <span style="color:#00e676;font-weight:700">BUILD sharedport-1650</span></div>
           <div class="status" id="deckStatus">Loading</div>
         </div>
         <div class="header-actions">

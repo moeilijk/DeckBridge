@@ -1,6 +1,6 @@
 import { WebSocketServer, WebSocket } from 'ws'
 import { EventEmitter } from 'events'
-import { IncomingMessage } from 'http'
+import { IncomingMessage, Server } from 'http'
 
 interface PluginClient {
   uuid: string
@@ -22,9 +22,27 @@ export class PluginServer extends EventEmitter {
     console.log(`[PI-WS ${ts}] ${source}: ${JSON.stringify(payload)}`)
   }
 
-  async start(): Promise<void> {
+  // Attach the plugin WebSocket to the dashboard's HTTP server (shared port).
+  // Under WSL2 only the HTTP port is reliably forwarded to the Windows host, so
+  // a separate WS port leaves the Property Inspector stuck on "Loading...".
+  // Sharing the proven-forwarding HTTP port avoids that entirely.
+  async start(httpServer?: Server): Promise<void> {
+    if (httpServer) {
+      this.attachToServer(httpServer)
+      return
+    }
     const requestedPort = Number.isInteger(this.preferredPort) && this.preferredPort > 0 ? this.preferredPort : 37685
     await this.listenOnPort(requestedPort)
+  }
+
+  private attachToServer(server: Server): void {
+    this.wss = new WebSocketServer({ server })
+    this.port = (server.address() as { port: number }).port
+    console.log(`PluginServer gekoppeld aan HTTP-server op poort ${this.port}`)
+    this.wss.on('connection', (socket: WebSocket, _req: IncomingMessage) => {
+      socket.once('message', (data) => this.handleRegistration(socket, data.toString()))
+      socket.on('error', (err) => console.error('WebSocket fout:', err))
+    })
   }
 
   private async listenOnPort(port: number): Promise<void> {
