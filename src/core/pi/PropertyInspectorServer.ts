@@ -604,7 +604,10 @@ export class PropertyInspectorServer {
   }
 
   private getState(url: URL): Record<string, unknown> {
-    const wsPort = parseInt(url.searchParams.get('wsPort') ?? '0', 10)
+    // The plugin WS shares this HTTP server's port; always use our own port so
+    // PI iframe URLs never point at a stale ?wsPort= that WSL2 won't forward.
+    void url
+    const wsPort = this.port
     const slots = this.slotProvider?.() ?? []
     const actions = this.actionProvider?.() ?? []
     const installedPlugins = this.installedPluginProvider?.() ?? []
@@ -1849,7 +1852,7 @@ export class PropertyInspectorServer {
     <section class="workspace">
       <div class="header">
         <div>
-          <div class="brand">DeckBridge <span style="color:#00e676;font-weight:700">BUILD sharedport-1650</span></div>
+          <div class="brand">DeckBridge <span style="color:#00e676;font-weight:700">BUILD piurl-1705</span></div>
           <div class="status" id="deckStatus">Loading</div>
         </div>
         <div class="header-actions">
