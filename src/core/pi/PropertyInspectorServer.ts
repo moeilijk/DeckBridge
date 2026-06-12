@@ -1902,7 +1902,7 @@ export class PropertyInspectorServer {
     <section class="workspace">
       <div class="header">
         <div>
-          <div class="brand">DeckBridge <span style="color:#00e676;font-weight:700">BUILD relurl-1751</span></div>
+          <div class="brand">DeckBridge <span style="color:#00e676;font-weight:700">BUILD relurl-1752</span></div>
           <div class="status" id="deckStatus">Loading</div>
         </div>
         <div class="header-actions">
@@ -2117,6 +2117,58 @@ export class PropertyInspectorServer {
     function actionSupportsKey(action, keyIndex) {
       var controllers = Array.isArray(action.controllers) && action.controllers.length ? action.controllers : ["Keypad"];
       return controllers.indexOf(isDialIndex(keyIndex) ? "Encoder" : "Keypad") !== -1;
+    }
+
+    function slotSupportsKey(slot, keyIndex) {
+      if (!slot) return true;
+      if (slot.isSystem) return !isDialIndex(keyIndex);
+      var action = state.actions.find(function(a) {
+        return a.pluginId === slot.pluginId && a.actionId === slot.actionId;
+      });
+      return action ? actionSupportsKey(action, keyIndex) : !isDialIndex(keyIndex);
+    }
+
+    function canDropSlotOnKey(source, targetKeyIndex) {
+      if (!source || !Number.isInteger(targetKeyIndex)) return false;
+      if (source.deviceId === state.primaryDeviceId && source.keyIndex === targetKeyIndex) return true;
+      var sourceSlot = null;
+      for (var i = 0; i < state.slots.length; i++) {
+        var slot = state.slots[i];
+        if (slot.deviceId === source.deviceId && slot.keyIndex === source.keyIndex) {
+          sourceSlot = slot;
+          break;
+        }
+      }
+      if (!sourceSlot || !slotSupportsKey(sourceSlot, targetKeyIndex)) return false;
+      var targetSlot = slotForKey(targetKeyIndex);
+      return !targetSlot || slotSupportsKey(targetSlot, source.keyIndex);
+    }
+
+    function canDropActionKeyOnKey(actionDragKey, targetKeyIndex) {
+      var action = actionFromKey(actionDragKey);
+      return !!action && actionSupportsKey(action, targetKeyIndex);
+    }
+
+    function canDropOnKey(targetKeyIndex, event) {
+      var slotMove = parseSlotDragPayload(event);
+      if (slotMove) return canDropSlotOnKey(slotMove, targetKeyIndex);
+      var actionDragKey = draggingActionKey;
+      if (event && event.dataTransfer) {
+        actionDragKey = event.dataTransfer.getData("application/x-deckbridge-action") || event.dataTransfer.getData("text/plain") || actionDragKey;
+      }
+      return canDropActionKeyOnKey(actionDragKey, targetKeyIndex);
+    }
+
+    function handleTileDragOver(keyIndex, event) {
+      event.preventDefault();
+      closeTileMenu();
+      if (!canDropOnKey(keyIndex, event)) {
+        event.currentTarget.classList.remove("drag-over");
+        if (event.dataTransfer) event.dataTransfer.dropEffect = "none";
+        return;
+      }
+      event.currentTarget.classList.add("drag-over");
+      if (event.dataTransfer) event.dataTransfer.dropEffect = parseSlotDragPayload(event) ? "move" : "copy";
     }
 
     function actionAvailableOnCurrentDevice(action) {
@@ -2547,12 +2599,7 @@ export class PropertyInspectorServer {
         key.addEventListener("pointermove", handleTilePointerMove);
         key.addEventListener("pointerup", handleTilePointerUp);
         key.addEventListener("pointercancel", cancelTilePointerDrag);
-        key.addEventListener("dragover", function(event) {
-          event.preventDefault();
-          closeTileMenu();
-          event.currentTarget.classList.add("drag-over");
-          if (event.dataTransfer) event.dataTransfer.dropEffect = "copy";
-        });
+        key.addEventListener("dragover", handleTileDragOver.bind(null, i));
         key.addEventListener("dragleave", function(event) {
           event.currentTarget.classList.remove("drag-over");
         });
@@ -2602,12 +2649,7 @@ export class PropertyInspectorServer {
           display.addEventListener("pointermove", handleTilePointerMove);
           display.addEventListener("pointerup", handleTilePointerUp);
           display.addEventListener("pointercancel", cancelTilePointerDrag);
-          display.addEventListener("dragover", function(event) {
-            event.preventDefault();
-            closeTileMenu();
-            event.currentTarget.classList.add("drag-over");
-            if (event.dataTransfer) event.dataTransfer.dropEffect = "copy";
-          });
+          display.addEventListener("dragover", handleTileDragOver.bind(null, keyIndex));
           display.addEventListener("dragleave", function(event) {
             event.currentTarget.classList.remove("drag-over");
           });
@@ -2945,7 +2987,8 @@ export class PropertyInspectorServer {
       updateFloatingTilePreview(event.clientX, event.clientY);
       clearDragOverState();
       var target = dragTargetFromPoint(event.clientX, event.clientY);
-      if (target) target.classList.add("drag-over");
+      var targetKeyIndex = target ? Number(target.dataset.keyIndex) : NaN;
+      if (target && canDropSlotOnKey(pointerTileDrag.source, targetKeyIndex)) target.classList.add("drag-over");
     }
 
     async function handleTilePointerUp(event) {
@@ -2966,7 +3009,7 @@ export class PropertyInspectorServer {
       var target = dragTargetFromPoint(event.clientX, event.clientY);
       var targetKeyIndex = target ? Number(target.dataset.keyIndex) : NaN;
 
-      if (Number.isInteger(targetKeyIndex)) {
+      if (Number.isInteger(targetKeyIndex) && canDropSlotOnKey(drag.source, targetKeyIndex)) {
         try {
           await moveTile(drag.source, targetKeyIndex);
         } catch (err) {
@@ -3186,6 +3229,12 @@ export class PropertyInspectorServer {
       selectedKeyIndex = keyIndex;
       var slotMove = parseSlotDragPayload(event);
       if (slotMove) {
+        if (!canDropSlotOnKey(slotMove, keyIndex)) {
+          render();
+          suppressTileClickUntil = Date.now() + 250;
+          endDrag();
+          return;
+        }
         try {
           await moveTile(slotMove, keyIndex);
         } catch (err) {
@@ -3203,6 +3252,11 @@ export class PropertyInspectorServer {
       }
       var action = actionFromKey(droppedActionKey);
       if (action) {
+        if (!actionSupportsKey(action, keyIndex)) {
+          render();
+          endDrag();
+          return;
+        }
         selectedActionKey = actionKey(action);
         try {
           await assignAction(action, keyIndex);
