@@ -1902,7 +1902,7 @@ export class PropertyInspectorServer {
     <section class="workspace">
       <div class="header">
         <div>
-          <div class="brand">DeckBridge <span style="color:#00e676;font-weight:700">BUILD relurl-1763</span></div>
+          <div class="brand">DeckBridge <span style="color:#00e676;font-weight:700">BUILD relurl-1764</span></div>
           <div class="status" id="deckStatus">Loading</div>
         </div>
         <div class="header-actions">
