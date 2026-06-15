@@ -84,10 +84,20 @@ async function main() {
   // --- Device settings (brightness) ---
   const configDir = join(homedir(), '.config', 'DeckBridge')
   const deviceSettingsPath = join(configDir, 'device-settings.json')
-  function loadDeviceSettings(): { brightness: number } {
-    try { return JSON.parse(readFileSync(deviceSettingsPath, 'utf-8')) } catch { return { brightness: 70 } }
+  type DeviceSettings = { brightness: number; activeDeviceId?: string }
+
+  function loadDeviceSettings(): DeviceSettings {
+    try {
+      const parsed = JSON.parse(readFileSync(deviceSettingsPath, 'utf-8')) as Partial<DeviceSettings>
+      return {
+        brightness: Number.isFinite(parsed.brightness) ? Number(parsed.brightness) : 70,
+        activeDeviceId: typeof parsed.activeDeviceId === 'string' ? parsed.activeDeviceId : undefined,
+      }
+    } catch {
+      return { brightness: 70 }
+    }
   }
-  function saveDeviceSettings(s: { brightness: number }): void {
+  function saveDeviceSettings(s: DeviceSettings): void {
     try { mkdirSync(configDir, { recursive: true }); writeFileSync(deviceSettingsPath, JSON.stringify(s, null, 2)) } catch { /* ignore */ }
   }
   const deviceSettings = loadDeviceSettings()
@@ -945,7 +955,14 @@ async function main() {
 
   const deviceIds = deviceManager.getDeviceIds()
   const fallbackDeviceId = 'deckbridge-xl-0'
-  const initialDeviceId = preferredDeviceId(deviceIds, fallbackDeviceId)
+  function selectInitialDeviceId(ids: string[], fallback: string): string {
+    if (deviceSettings.activeDeviceId && ids.includes(deviceSettings.activeDeviceId)) {
+      return deviceSettings.activeDeviceId
+    }
+    return preferredDeviceId(ids, fallback)
+  }
+
+  const initialDeviceId = selectInitialDeviceId(deviceIds, fallbackDeviceId)
   let activeDeviceId = initialDeviceId
   const deviceInfoFor = (id: string) => ({
     id,
@@ -1012,6 +1029,8 @@ async function main() {
   piServer.setDeviceSelectionHandler((deviceId: string) => {
     if (!deviceManager.getDeviceIds().includes(deviceId)) return
     activeDeviceId = deviceId
+    deviceSettings.activeDeviceId = deviceId
+    saveDeviceSettings(deviceSettings)
   })
   piServer.setLayoutProvider(() => {
     const id = getActiveDeviceId()
@@ -1019,8 +1038,6 @@ async function main() {
     const rows = deviceManager.getRows(id)
     return { columns, rows, totalKeys: deviceManager.getButtonCount(id) || columns * rows }
   })
-  await removeIncompatibleCurrentViewSlots()
-
   piServer.setSlotMutationHandlers({
     assign: async ({ deviceId, keyIndex, pluginId, actionId, settings }) => {
       assertCompatibleSlotLocation(deviceId, keyIndex, pluginId, actionId)
@@ -1196,12 +1213,20 @@ async function main() {
   piServer.setUndoRedoHandlers({
     undo: async () => {
       const ok = profileManager.undo()
-      if (ok) { clearAllDisplayState(); await renderCurrentView(true) }
+      if (ok) {
+        await profileManager.save()
+        clearAllDisplayState()
+        await renderCurrentView(true)
+      }
       return ok
     },
     redo: async () => {
       const ok = profileManager.redo()
-      if (ok) { clearAllDisplayState(); await renderCurrentView(true) }
+      if (ok) {
+        await profileManager.save()
+        clearAllDisplayState()
+        await renderCurrentView(true)
+      }
       return ok
     },
     state: () => ({ canUndo: profileManager.canUndo(), canRedo: profileManager.canRedo() }),
@@ -1297,6 +1322,7 @@ async function main() {
   })
 
   await pluginManager.loadPlugins(pluginDir, pluginServer.getPort(), deviceInfos)
+  await removeIncompatibleCurrentViewSlots()
 
   const appMonitor = createApplicationMonitor()
 
@@ -1311,18 +1337,23 @@ async function main() {
     broadcastToAllPlugins({ event: 'systemDidWakeUp' })
   })
 
-  process.on('SIGINT', async () => {
+  async function shutdown(): Promise<void> {
     appMonitor.stop()
     broadcastToAllPlugins({
       event: 'applicationDidTerminate',
       payload: { application: APP_IDENTIFIER },
     })
+    await profileManager.save()
+    saveDeviceSettings(deviceSettings)
     pluginManager.stopAll()
     await deviceManager.stop()
     await pluginServer.stop()
     await piServer.stop()
     process.exit(0)
-  })
+  }
+
+  process.on('SIGINT', () => { void shutdown() })
+  process.on('SIGTERM', () => { void shutdown() })
 }
 
 main().catch(console.error)
