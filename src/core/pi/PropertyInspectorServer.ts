@@ -1439,8 +1439,14 @@ export class PropertyInspectorServer {
       grid-column: 1 / -1;
       display: grid;
       grid-template-columns: repeat(4, minmax(0, 1fr));
-      gap: 4px;
-      padding-top: 2px;
+      gap: 0;
+      aspect-ratio: 8 / 1;
+      min-height: 0;
+      overflow: hidden;
+      border: 1px solid #2f3941;
+      border-radius: 8px;
+      background: #000;
+      box-shadow: inset 0 0 0 1px rgba(255,255,255,.03);
     }
     .dial-control-strip {
       grid-column: 1 / -1;
@@ -1464,28 +1470,38 @@ export class PropertyInspectorServer {
       text-align: left;
     }
     .dial-display {
-      aspect-ratio: 2 / 1;
+      aspect-ratio: auto;
+      width: 100%;
+      height: 100%;
       grid-template-rows: minmax(0, 1fr);
-      padding: 4px;
+      padding: 0;
       overflow: hidden;
       background: #050606;
-      border-color: #2f3941;
+      border: 0;
+      border-radius: 0;
+      border-left: 1px solid #182029;
+      border-right: 1px solid #182029;
     }
     .dial-display.selected {
-      border-color: var(--accent-2);
-      box-shadow: 0 0 0 2px rgba(58, 160, 255, .3);
+      box-shadow: inset 0 0 0 2px rgba(58, 160, 255, .55);
     }
     .dial-display .key-label {
+      width: 100%;
+      height: 100%;
       min-height: 0;
       overflow: hidden;
+      display: grid;
+      place-items: stretch;
+      line-height: 1;
+      -webkit-line-clamp: unset;
     }
     .dial-feedback-image {
       width: 100%;
       height: 100%;
-      object-fit: contain;
+      object-fit: fill;
       display: block;
       background: #000;
-      border-radius: 4px;
+      border-radius: 0;
     }
     .dial-rotary {
       min-width: 0;
@@ -2032,6 +2048,8 @@ export class PropertyInspectorServer {
 
     var state = null;
     var ENCODER_BASE_INDEX = 1000;
+    var DIAL_TOUCH_SEGMENT_WIDTH = 200;
+    var DIAL_TOUCH_STRIP_HEIGHT = 100;
     var selectedKeyIndex = null;
     var selectedContext = null;
     var selectedActionKey = null;
@@ -3154,7 +3172,15 @@ export class PropertyInspectorServer {
       var response = await fetch(apiUrl("/api/dials/touch"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ deviceId: state.primaryDeviceId, dialIndex: dialIndex, hold: false, tapPos: [dialIndex * 200 + 100, 50] })
+        body: JSON.stringify({
+          deviceId: state.primaryDeviceId,
+          dialIndex: dialIndex,
+          hold: false,
+          tapPos: [
+            dialIndex * DIAL_TOUCH_SEGMENT_WIDTH + Math.floor(DIAL_TOUCH_SEGMENT_WIDTH / 2),
+            Math.floor(DIAL_TOUCH_STRIP_HEIGHT / 2)
+          ]
+        })
       });
       if (!response.ok) {
         var message = await response.text();
