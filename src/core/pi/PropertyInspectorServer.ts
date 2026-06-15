@@ -1476,11 +1476,9 @@ export class PropertyInspectorServer {
       grid-template-rows: minmax(0, 1fr);
       padding: 0;
       overflow: hidden;
-      background: #050606;
+      background: #000;
       border: 0;
       border-radius: 0;
-      border-left: 1px solid #182029;
-      border-right: 1px solid #182029;
     }
     .dial-display.selected {
       box-shadow: inset 0 0 0 2px rgba(58, 160, 255, .55);
@@ -1918,7 +1916,7 @@ export class PropertyInspectorServer {
     <section class="workspace">
       <div class="header">
         <div>
-          <div class="brand">DeckBridge <span style="color:#00e676;font-weight:700">BUILD relurl-1765</span></div>
+          <div class="brand">DeckBridge <span style="color:#00e676;font-weight:700">BUILD relurl-1768</span></div>
           <div class="status" id="deckStatus">Loading</div>
         </div>
         <div class="header-actions">
@@ -2273,14 +2271,20 @@ export class PropertyInspectorServer {
         var imagesResponse = await fetch(apiUrl("/api/images"));
         var images = await imagesResponse.json();
         patchDeckImages(images);
-        if (!byId("piPanel").classList.contains("open")) {
-          var response = await fetch(apiUrl("/api/state"));
-          state = await response.json();
-          if (selectedKeyIndex === null) {
-            selectedKeyIndex = Math.min(31, Math.max(0, state.layout.totalKeys - 1));
-          }
+        // Always refresh state + deck so dial/tile feedback (title/value text,
+        // which only lives in /api/state) updates live like real hardware, even
+        // while the Property Inspector is open. Only skip re-rendering the
+        // inspector form to avoid clobbering in-progress edits.
+        var piOpen = byId("piPanel").classList.contains("open");
+        var response = await fetch(apiUrl("/api/state"));
+        state = await response.json();
+        if (selectedKeyIndex === null) {
+          selectedKeyIndex = Math.min(31, Math.max(0, state.layout.totalKeys - 1));
+        }
+        renderDeck();
+        renderStatus();
+        if (!piOpen) {
           renderInspector();
-          renderStatus();
         }
       } finally {
         liveRefreshInFlight = false;
