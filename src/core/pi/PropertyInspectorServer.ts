@@ -422,13 +422,17 @@ export class PropertyInspectorServer {
         .filter(s => {
           const hasKeyImage = typeof s.imageDataUrl === 'string' && s.imageDataUrl.length > 0
           const hasFeedbackImage = typeof s.feedback?.imageDataUrl === 'string' && s.feedback.imageDataUrl.length > 0
-          return hasKeyImage || hasFeedbackImage
+          const hasFeedbackText = (typeof s.feedback?.title === 'string' && s.feedback.title.length > 0)
+            || (typeof s.feedback?.value === 'string' && s.feedback.value.length > 0)
+          return hasKeyImage || hasFeedbackImage || hasFeedbackText
         })
         .map(s => ({
           deviceId: s.deviceId,
           keyIndex: s.keyIndex,
           imageDataUrl: s.imageDataUrl,
           feedbackImageDataUrl: s.feedback?.imageDataUrl,
+          feedbackTitle: s.feedback?.title,
+          feedbackValue: s.feedback?.value,
         }))
       this.sendJson(res, 200, images)
       return
@@ -1916,7 +1920,7 @@ export class PropertyInspectorServer {
     <section class="workspace">
       <div class="header">
         <div>
-          <div class="brand">DeckBridge <span style="color:#00e676;font-weight:700">BUILD relurl-1768</span></div>
+          <div class="brand">DeckBridge <span style="color:#00e676;font-weight:700">BUILD relurl-1772</span></div>
           <div class="status" id="deckStatus">Loading</div>
         </div>
         <div class="header-actions">
@@ -2270,21 +2274,18 @@ export class PropertyInspectorServer {
       try {
         var imagesResponse = await fetch(apiUrl("/api/images"));
         var images = await imagesResponse.json();
+        // patchDeckImages updates dial image AND text feedback in place (no full
+        // deck rebuild), so live feedback stays current without flashing the
+        // action-name fallback.
         patchDeckImages(images);
-        // Always refresh state + deck so dial/tile feedback (title/value text,
-        // which only lives in /api/state) updates live like real hardware, even
-        // while the Property Inspector is open. Only skip re-rendering the
-        // inspector form to avoid clobbering in-progress edits.
-        var piOpen = byId("piPanel").classList.contains("open");
-        var response = await fetch(apiUrl("/api/state"));
-        state = await response.json();
-        if (selectedKeyIndex === null) {
-          selectedKeyIndex = Math.min(31, Math.max(0, state.layout.totalKeys - 1));
-        }
-        renderDeck();
-        renderStatus();
-        if (!piOpen) {
+        if (!byId("piPanel").classList.contains("open")) {
+          var response = await fetch(apiUrl("/api/state"));
+          state = await response.json();
+          if (selectedKeyIndex === null) {
+            selectedKeyIndex = Math.min(31, Math.max(0, state.layout.totalKeys - 1));
+          }
           renderInspector();
+          renderStatus();
         }
       } finally {
         liveRefreshInFlight = false;
@@ -2566,6 +2567,15 @@ export class PropertyInspectorServer {
             var feedbackImg = key.querySelector("img.dial-feedback-image");
             if (!feedbackImg) { renderDeck(); return; }
             if (feedbackImg.src !== newFeedbackSrc) { feedbackImg.src = newFeedbackSrc; }
+          } else if (entry && (entry.feedbackTitle || entry.feedbackValue)) {
+            // Text-only feedback (e.g. an empty carousel's "Configure pages"):
+            // patch the label in place so it updates live without rebuilding the
+            // deck (which would flash the action-name fallback).
+            var dialLabel = key.querySelector(".key-label");
+            if (dialLabel) {
+              var dialText = [entry.feedbackTitle, entry.feedbackValue].filter(Boolean).join(" ");
+              if (dialLabel.textContent !== dialText) { dialLabel.textContent = dialText; }
+            }
           }
           continue;
         }
@@ -3087,6 +3097,12 @@ export class PropertyInspectorServer {
       }
       selectedKeyIndex = targetKeyIndex;
       state = await response.json();
+      // Keep selectedContext aligned with the moved slot — selectedSlot() prefers
+      // context, so a stale one would point the inspector at the wrong slot.
+      var movedSlot = (state.slots || []).find(function (s) {
+        return s.keyIndex === targetKeyIndex && s.deviceId === state.primaryDeviceId;
+      });
+      selectedContext = movedSlot ? (movedSlot.context || null) : null;
       render();
     }
 
@@ -3112,7 +3128,17 @@ export class PropertyInspectorServer {
         throw new Error(message || "Tile assignment failed");
       }
       state = await response.json();
+      // selectedSlot() prefers selectedContext over selectedKeyIndex, so update it
+      // to the just-assigned slot. Otherwise openSelectedPI() would re-open the
+      // previously selected slot's PI (e.g. a dial) instead of the new tile.
+      var assignedSlot = (state.slots || []).find(function (s) {
+        return s.keyIndex === targetKeyIndex && s.deviceId === state.primaryDeviceId;
+      });
+      selectedContext = assignedSlot ? (assignedSlot.context || null) : null;
       render();
+      // Open the just-assigned slot's Property Inspector immediately, instead of
+      // leaving the previously selected slot's PI (e.g. a dial) on screen.
+      openSelectedPI();
     }
 
     async function assignSelectedAction() {
