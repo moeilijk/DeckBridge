@@ -2682,7 +2682,12 @@ export class PropertyInspectorServer {
           }
           display.appendChild(label);
 
-          display.addEventListener("click", activateKey.bind(null, keyIndex));
+          display.addEventListener("click", function(idx, keyIdx, event) {
+            activateKey(keyIdx);
+            if (slotForKey(keyIdx)) {
+              sendDialTouch(idx).catch(function(err) { showError(err.message || String(err)); });
+            }
+          }.bind(null, d, keyIndex));
           display.addEventListener("contextmenu", openTileMenu.bind(null, keyIndex));
           display.addEventListener("pointerdown", handleTilePointerDown.bind(null, keyIndex));
           display.addEventListener("pointermove", handleTilePointerMove);
