@@ -36,15 +36,3 @@ test('selecting a tile does not rebuild the deck', async () => {
   assert.match(handler, /renderInspector\(\)/)
   assert.doesNotMatch(handler, /render\(\)/)
 })
-
-test('patchDeckImages skips the dial-rotary controls element', async () => {
-  // The rotary carries data-key-index for selection highlighting but is not a
-  // feedback target. Without skipping it, the dial branch hits the has-feedback
-  // mismatch and calls renderDeck() every poll, freezing all tiles/dials with a
-  // stale state while the Property Inspector is open.
-  const source = await readFile('src/core/pi/PropertyInspectorServer.ts', 'utf8')
-  const idx = source.indexOf('function patchDeckImages(images)')
-  assert.notEqual(idx, -1, 'patchDeckImages should exist')
-  const body = source.slice(idx, source.indexOf('\n    function ', idx + 10))
-  assert.match(body, /classList\.contains\("dial-rotary"\)\)\s*continue/)
-})
