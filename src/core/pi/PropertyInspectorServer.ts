@@ -1920,7 +1920,7 @@ export class PropertyInspectorServer {
     <section class="workspace">
       <div class="header">
         <div>
-          <div class="brand">DeckBridge <span style="color:#00e676;font-weight:700">BUILD relurl-1772</span></div>
+          <div class="brand">DeckBridge <span style="color:#00e676;font-weight:700">BUILD relurl-1774</span></div>
           <div class="status" id="deckStatus">Loading</div>
         </div>
         <div class="header-actions">
@@ -2556,6 +2556,12 @@ export class PropertyInspectorServer {
       var keys = deck.querySelectorAll("[data-key-index]");
       for (var ki = 0; ki < keys.length; ki++) {
         var key = keys[ki];
+        // The dial-rotary controls element also carries data-key-index (for
+        // selection highlighting) but is not a feedback target. Skipping it is
+        // critical: otherwise the dial branch below hits the has-feedback
+        // mismatch and calls renderDeck() every poll, which with a stale state
+        // (Property Inspector open) freezes all tiles/dials.
+        if (key.classList.contains("dial-rotary")) continue;
         var i = parseInt(key.dataset.keyIndex, 10);
         var entry = images.find(function(e) { return e.keyIndex === i && e.deviceId === state.primaryDeviceId; });
         if (isDialIndex(i)) {
@@ -2682,12 +2688,9 @@ export class PropertyInspectorServer {
           }
           display.appendChild(label);
 
-          display.addEventListener("click", function(idx, keyIdx, event) {
+          display.addEventListener("click", function(keyIdx, event) {
             activateKey(keyIdx);
-            if (slotForKey(keyIdx)) {
-              sendDialTouch(idx).catch(function(err) { showError(err.message || String(err)); });
-            }
-          }.bind(null, d, keyIndex));
+          }.bind(null, keyIndex));
           display.addEventListener("contextmenu", openTileMenu.bind(null, keyIndex));
           display.addEventListener("pointerdown", handleTilePointerDown.bind(null, keyIndex));
           display.addEventListener("pointermove", handleTilePointerMove);
@@ -2703,6 +2706,7 @@ export class PropertyInspectorServer {
           var rotary = document.createElement("div");
           rotary.className = "dial-rotary " + (slot ? "configured" : "empty") + (selectedKeyIndex === keyIndex ? " selected" : "");
           rotary.title = slot ? slot.actionId : "Empty dial";
+          rotary.dataset.keyIndex = String(keyIndex);
           rotary.tabIndex = 0;
           rotary.setAttribute("role", "button");
           rotary.addEventListener("click", activateKey.bind(null, keyIndex));
@@ -2773,6 +2777,13 @@ export class PropertyInspectorServer {
       }
     }
 
+    function renderSelectionState() {
+      var selected = String(selectedKeyIndex);
+      document.querySelectorAll(".key[data-key-index], .dial-rotary[data-key-index]").forEach(function(el) {
+        el.classList.toggle("selected", selectedKeyIndex !== null && el.dataset.keyIndex === selected);
+      });
+    }
+
     function renderInspector() {
       var slot = selectedSlot();
       selectedContext = slot ? (slot.context || null) : null;
@@ -2824,7 +2835,9 @@ export class PropertyInspectorServer {
       selectedContext = clickedSlot ? (clickedSlot.context || null) : null;
       closeTileMenu();
       if (prev !== keyIndex) closePI();
-      render();
+      renderSelectionState();
+      renderInspector();
+      renderStatus();
       var slot = clickedSlot || slotForKey(keyIndex);
       debugPI("activateKey", {
         prevKeyIndex: prev,
