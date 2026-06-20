@@ -1920,7 +1920,7 @@ export class PropertyInspectorServer {
     <section class="workspace">
       <div class="header">
         <div>
-          <div class="brand">DeckBridge <span style="color:#00e676;font-weight:700">BUILD relurl-1774</span></div>
+          <div class="brand">DeckBridge <span style="color:#00e676;font-weight:700">BUILD relurl-1775</span></div>
           <div class="status" id="deckStatus">Loading</div>
         </div>
         <div class="header-actions">
@@ -2567,6 +2567,24 @@ export class PropertyInspectorServer {
         if (isDialIndex(i)) {
           var newFeedbackSrc = entry ? entry.feedbackImageDataUrl : null;
           var hasFeedbackImage = typeof newFeedbackSrc === "string" && newFeedbackSrc.length > 0;
+          // Keep the cached slot state in sync with the freshest feedback from
+          // /api/images. With the Property Inspector OPEN, refreshLiveState does NOT
+          // re-fetch /api/state, so otherwise a just-configured (or just bulk-added)
+          // dial's slot stays without its feedback image and the renderDeck() below
+          // keeps redrawing the action-name placeholder ("LHM Dial Carousel") until a
+          // full F5 reload. renderDeck reads slot.feedback, so refresh it here.
+          if (state && Array.isArray(state.slots)) {
+            for (var si = 0; si < state.slots.length; si++) {
+              var sslot = state.slots[si];
+              if (sslot && sslot.keyIndex === i && sslot.deviceId === state.primaryDeviceId) {
+                if (!sslot.feedback) sslot.feedback = {};
+                sslot.feedback.imageDataUrl = hasFeedbackImage ? newFeedbackSrc : "";
+                sslot.feedback.title = entry && entry.feedbackTitle ? entry.feedbackTitle : "";
+                sslot.feedback.value = entry && entry.feedbackValue ? entry.feedbackValue : "";
+                break;
+              }
+            }
+          }
           var dialHadFeedback = key.classList.contains("has-feedback");
           if (hasFeedbackImage !== dialHadFeedback) { renderDeck(); return; }
           if (hasFeedbackImage) {
