@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
 import { mkdtemp, readFile, rm } from 'node:fs/promises'
+import { existsSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
@@ -54,6 +55,78 @@ test('named profiles are stored separately from default', async () => {
     const freshDemo = new ProfileManager({ profileDir: dir, profileName: 'demo-xl' })
     await freshDemo.load()
     assert.equal(freshDemo.getSlot(deviceId, 0)?.context, 'demo-context')
+  })
+})
+
+test('listProfiles returns saved profiles plus the active one, sorted, with active marked', async () => {
+  await withProfileDir(async (dir) => {
+    const manager = new ProfileManager({ profileDir: dir, profileName: 'gaming' })
+    await manager.createProfile('work')
+    await manager.createProfile('streaming')
+    // 'gaming' is active but never saved — it must still appear.
+
+    const profiles = await manager.listProfiles()
+    assert.deepEqual(profiles, [
+      { name: 'gaming', active: true },
+      { name: 'streaming', active: false },
+      { name: 'work', active: false },
+    ])
+  })
+})
+
+test('createProfile writes an empty profile and rejects duplicates', async () => {
+  await withProfileDir(async (dir) => {
+    const manager = new ProfileManager(dir)
+    await manager.createProfile('demo')
+
+    const saved = JSON.parse(await readFile(join(dir, 'demo.json'), 'utf8'))
+    assert.deepEqual(saved, { activePage: 0, pages: [{ slots: [], folders: [] }] })
+
+    await assert.rejects(() => manager.createProfile('demo'), /already exists/)
+  })
+})
+
+test('createProfile rejects invalid names', async () => {
+  await withProfileDir(async (dir) => {
+    const manager = new ProfileManager(dir)
+    await assert.rejects(() => manager.createProfile('../escape'), /Invalid profile name/)
+  })
+})
+
+test('renameProfile moves the file and follows the active profile', async () => {
+  await withProfileDir(async (dir) => {
+    const manager = new ProfileManager({ profileDir: dir, profileName: 'old-name' })
+    manager.setSlot(deviceId, 0, slot('keep-me'))
+    await manager.save()
+
+    await manager.renameProfile('old-name', 'new-name')
+
+    assert.equal(manager.getActiveProfileName(), 'new-name')
+    assert.equal(existsSync(join(dir, 'old-name.json')), false)
+    const saved = JSON.parse(await readFile(join(dir, 'new-name.json'), 'utf8'))
+    assert.equal(saved.pages[0].slots[0].context, 'keep-me')
+  })
+})
+
+test('renameProfile rejects when the target already exists', async () => {
+  await withProfileDir(async (dir) => {
+    const manager = new ProfileManager({ profileDir: dir, profileName: 'a' })
+    await manager.save()
+    await manager.createProfile('b')
+    await assert.rejects(() => manager.renameProfile('a', 'b'), /already exists/)
+  })
+})
+
+test('deleteProfile removes a non-active profile but refuses the active and the last one', async () => {
+  await withProfileDir(async (dir) => {
+    const manager = new ProfileManager({ profileDir: dir, profileName: 'main' })
+    await manager.save()
+    await manager.createProfile('scratch')
+
+    await manager.deleteProfile('scratch')
+    assert.equal(existsSync(join(dir, 'scratch.json')), false)
+
+    await assert.rejects(() => manager.deleteProfile('main'), /active profile/)
   })
 })
 

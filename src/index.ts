@@ -84,7 +84,7 @@ async function main() {
   // --- Device settings (brightness) ---
   const configDir = join(homedir(), '.config', 'DeckBridge')
   const deviceSettingsPath = join(configDir, 'device-settings.json')
-  type DeviceSettings = { brightness: number; activeDeviceId?: string }
+  type DeviceSettings = { brightness: number; activeDeviceId?: string; activeProfile?: string }
 
   function loadDeviceSettings(): DeviceSettings {
     try {
@@ -92,6 +92,7 @@ async function main() {
       return {
         brightness: Number.isFinite(parsed.brightness) ? Number(parsed.brightness) : 70,
         activeDeviceId: typeof parsed.activeDeviceId === 'string' ? parsed.activeDeviceId : undefined,
+        activeProfile: typeof parsed.activeProfile === 'string' ? parsed.activeProfile : undefined,
       }
     } catch {
       return { brightness: 70 }
@@ -105,6 +106,32 @@ async function main() {
   for (const devId of deviceManager.getDeviceIds()) {
     await deviceManager.setBrightness(devId, deviceSettings.brightness)
   }
+
+  // Restore the last active profile. The env var wins (explicit override), then
+  // the persisted choice; both fall back to the 'default' profile already loaded.
+  if (!process.env.DECKBRIDGE_PROFILE
+      && deviceSettings.activeProfile
+      && deviceSettings.activeProfile !== profileManager.getActiveProfileName()) {
+    try {
+      await profileManager.switchProfile(deviceSettings.activeProfile)
+    } catch {
+      console.warn(`Kon opgeslagen profiel niet laden: ${deviceSettings.activeProfile}`)
+    }
+  }
+
+  // Cached profile list for the dashboard (getState is synchronous; listProfiles
+  // is not). Refreshed at startup and after every profile mutation.
+  let profilesSnapshot: { profiles: Array<{ name: string; active: boolean }>; active: string } = {
+    profiles: [],
+    active: profileManager.getActiveProfileName(),
+  }
+  async function refreshProfiles(): Promise<void> {
+    profilesSnapshot = {
+      profiles: await profileManager.listProfiles(),
+      active: profileManager.getActiveProfileName(),
+    }
+  }
+  await refreshProfiles()
 
   // Sync nav buttons: prevpage only on pages >0, nextpage only on pages <last
   let profileDirty = false
@@ -1318,6 +1345,55 @@ async function main() {
         await profileManager.save()
         await renderCurrentView(true)
       }
+    },
+  })
+
+  // ── Profielen (named profiles) ───────────────────────────────────────────────
+
+  piServer.setProfileProvider(() => profilesSnapshot)
+
+  async function switchToNamedProfile(name: string): Promise<boolean> {
+    if (name === profileManager.getActiveProfileName()) return false
+    const available = await profileManager.listProfiles()
+    if (!available.some((p) => p.name === name)) throw new Error(`Profile not found: ${name}`)
+    // Persist the outgoing profile before switching away, so a never-saved active
+    // profile (e.g. one started via DECKBRIDGE_PROFILE) keeps its file and stays listed.
+    await profileManager.save()
+    const oldSlots = profileManager.getAllSlots()
+    await profileManager.switchProfile(name)
+    for (const s of oldSlots) {
+      if (s.slot.pluginId !== SYSTEM_PLUGIN) sendWillDisappear(s.deviceId, s.keyIndex, s.slot)
+    }
+    syncNavButtons()
+    await profileManager.save()
+    clearAllDisplayState()
+    await renderCurrentView(true)
+    deviceSettings.activeProfile = name
+    saveDeviceSettings(deviceSettings)
+    return true
+  }
+
+  piServer.setProfileHandlers({
+    switch: async (name) => {
+      await switchToNamedProfile(name)
+      await refreshProfiles()
+    },
+    create: async (name) => {
+      await profileManager.createProfile(name)
+      await refreshProfiles()
+    },
+    rename: async (oldName, newName) => {
+      const wasActive = oldName === profileManager.getActiveProfileName()
+      const safe = await profileManager.renameProfile(oldName, newName)
+      if (wasActive) {
+        deviceSettings.activeProfile = safe
+        saveDeviceSettings(deviceSettings)
+      }
+      await refreshProfiles()
+    },
+    remove: async (name) => {
+      await profileManager.deleteProfile(name)
+      await refreshProfiles()
     },
   })
 

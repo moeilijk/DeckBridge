@@ -1,4 +1,4 @@
-import { readFile, writeFile, mkdir } from 'fs/promises'
+import { readFile, writeFile, mkdir, readdir, rename, unlink } from 'fs/promises'
 import { existsSync } from 'fs'
 import { join, dirname } from 'path'
 import { homedir } from 'os'
@@ -64,6 +64,7 @@ export class ProfileManager {
   private contextIndex = new Map<string, ContextLocation>()
   private profilePath: string
   private profileDir: string
+  private profileName: string
   // Navigation stack — empty = at page level; last entry = deepest folder
   private navStack: NavView[] = []
   // Undo/redo: two-stack model (undoStack + redoStack)
@@ -79,16 +80,80 @@ export class ProfileManager {
     const dir = options.profileDir ?? join(homedir(), '.config', 'DeckBridge', 'profiles')
     const profileName = normalizeProfileName(options.profileName ?? 'default')
     this.profileDir = dir
+    this.profileName = profileName
     this.profilePath = join(dir, `${profileName}.json`)
   }
 
   /** Switch to a different named profile in the same directory and reload. */
   async switchProfile(name: string): Promise<void> {
-    this.profilePath = join(this.profileDir, `${normalizeProfileName(name)}.json`)
+    const safe = normalizeProfileName(name)
+    this.profileName = safe
+    this.profilePath = join(this.profileDir, `${safe}.json`)
     await this.load()
   }
 
   getProfilePath(): string { return this.profilePath }
+
+  getActiveProfileName(): string { return this.profileName }
+
+  // ── Profile management (named profiles) ─────────────────────────────────────
+
+  /** List all named profiles in the profile directory, marking the active one. */
+  async listProfiles(): Promise<Array<{ name: string; active: boolean }>> {
+    let entries: string[] = []
+    try {
+      entries = await readdir(this.profileDir)
+    } catch {
+      // Directory may not exist yet (nothing saved) — the active profile still counts.
+    }
+    const names = entries
+      .filter((file) => file.endsWith('.json'))
+      .map((file) => file.slice(0, -'.json'.length))
+      .filter((name) => /^[a-zA-Z0-9._-]+$/.test(name))
+    // The active profile is always selectable, even before it has been saved.
+    if (!names.includes(this.profileName)) names.push(this.profileName)
+    names.sort((a, b) => a.localeCompare(b))
+    return names.map((name) => ({ name, active: name === this.profileName }))
+  }
+
+  /** Create a new empty profile. Does not switch to it. */
+  async createProfile(name: string): Promise<string> {
+    const safe = normalizeProfileName(name)
+    const path = join(this.profileDir, `${safe}.json`)
+    if (existsSync(path)) throw new Error(`Profile already exists: ${safe}`)
+    await mkdir(this.profileDir, { recursive: true })
+    const empty: ProfileData = { activePage: 0, pages: [{ slots: [], folders: [] }] }
+    await writeFile(path, JSON.stringify(empty, null, 2))
+    return safe
+  }
+
+  /** Rename a profile file. If it is the active profile, the active reference moves too. */
+  async renameProfile(oldName: string, newName: string): Promise<string> {
+    const from = normalizeProfileName(oldName)
+    const to = normalizeProfileName(newName)
+    if (from === to) return to
+    const fromPath = join(this.profileDir, `${from}.json`)
+    const toPath = join(this.profileDir, `${to}.json`)
+    if (!existsSync(fromPath)) throw new Error(`Profile not found: ${from}`)
+    if (existsSync(toPath)) throw new Error(`Profile already exists: ${to}`)
+    await rename(fromPath, toPath)
+    if (this.profileName === from) {
+      this.profileName = to
+      this.profilePath = toPath
+    }
+    return to
+  }
+
+  /** Delete a profile file. The active profile and the last remaining profile cannot be deleted. */
+  async deleteProfile(name: string): Promise<void> {
+    const safe = normalizeProfileName(name)
+    if (safe === this.profileName) throw new Error(`Cannot delete the active profile: ${safe}`)
+    const profiles = await this.listProfiles()
+    if (profiles.length <= 1) throw new Error('Cannot delete the last remaining profile')
+    const path = join(this.profileDir, `${safe}.json`)
+    if (!existsSync(path)) throw new Error(`Profile not found: ${safe}`)
+    await unlink(path)
+  }
 
   // ── Persistence ───────────────────────────────────────────────────────────────
 

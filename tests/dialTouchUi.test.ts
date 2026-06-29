@@ -4,7 +4,7 @@ import { test } from 'node:test'
 
 test('dashboard exposes current relurl build marker', async () => {
   const source = await readFile('src/core/pi/PropertyInspectorServer.ts', 'utf8')
-  assert.match(source, /BUILD relurl-1775/)
+  assert.match(source, /BUILD relurl-1776/)
 })
 
 test('dial display click only selects configured dials', async () => {

@@ -193,6 +193,11 @@ export class PropertyInspectorServer {
   private dialTouchHandler: ((request: DialEventRequest) => Promise<void> | void) | null = null
   private installPluginHandler: ((sourcePath: string) => Promise<void> | void) | null = null
   private uninstallPluginHandler: ((pluginId: string) => Promise<void> | void) | null = null
+  private profileProvider: (() => { profiles: Array<{ name: string; active: boolean }>; active: string }) | null = null
+  private switchProfileHandler: ((name: string) => Promise<void> | void) | null = null
+  private createProfileHandler: ((name: string) => Promise<void> | void) | null = null
+  private renameProfileHandler: ((oldName: string, newName: string) => Promise<void> | void) | null = null
+  private deleteProfileHandler: ((name: string) => Promise<void> | void) | null = null
   private readonly debugPI: boolean = process.env.DECKBRIDGE_DEBUG_PI === '1'
   private readonly debugPILogPath: string = process.env.DECKBRIDGE_DEBUG_PI_LOG || join(homedir(), '.config', 'DeckBridge', 'logs', 'pi-debug.log')
   private readonly preferredPort: number = Number(process.env.DECKBRIDGE_PI_PORT ?? 34075)
@@ -319,6 +324,22 @@ export class PropertyInspectorServer {
   }): void {
     this.installPluginHandler = handlers.install
     this.uninstallPluginHandler = handlers.uninstall
+  }
+
+  setProfileProvider(fn: () => { profiles: Array<{ name: string; active: boolean }>; active: string }): void {
+    this.profileProvider = fn
+  }
+
+  setProfileHandlers(handlers: {
+    switch: (name: string) => Promise<void> | void
+    create: (name: string) => Promise<void> | void
+    rename: (oldName: string, newName: string) => Promise<void> | void
+    remove: (name: string) => Promise<void> | void
+  }): void {
+    this.switchProfileHandler = handlers.switch
+    this.createProfileHandler = handlers.create
+    this.renameProfileHandler = handlers.rename
+    this.deleteProfileHandler = handlers.remove
   }
 
   async start(pluginBaseDir: string): Promise<void> {
@@ -528,6 +549,26 @@ export class PropertyInspectorServer {
       return
     }
 
+    if (url.pathname === '/api/profiles/switch' && req.method === 'POST') {
+      await this.handleProfileAction(req, res, url, 'switch')
+      return
+    }
+
+    if (url.pathname === '/api/profiles/create' && req.method === 'POST') {
+      await this.handleProfileAction(req, res, url, 'create')
+      return
+    }
+
+    if (url.pathname === '/api/profiles/rename' && req.method === 'POST') {
+      await this.handleProfileAction(req, res, url, 'rename')
+      return
+    }
+
+    if (url.pathname === '/api/profiles/delete' && req.method === 'POST') {
+      await this.handleProfileAction(req, res, url, 'delete')
+      return
+    }
+
     if (url.pathname === '/api/dials/rotate' && req.method === 'POST') {
       await this.handleDialRotate(req, res)
       return
@@ -635,10 +676,13 @@ export class PropertyInspectorServer {
 
     const pages = this.pageProvider?.() ?? { activePage: 0, pageCount: 1 }
     const view = this.viewProvider?.() ?? { inFolder: false, navDepth: 0 }
+    const profileState = this.profileProvider?.() ?? { profiles: [], active: '' }
 
     const payload = {
       primaryDeviceId,
       devices,
+      profiles: profileState.profiles,
+      activeProfile: profileState.active,
       layout,
       actions,
       installedPlugins,
@@ -728,6 +772,35 @@ export class PropertyInspectorServer {
     }
     await this.selectDeviceHandler(deviceId)
     this.sendJson(res, 200, this.getState(url))
+  }
+
+  private async handleProfileAction(
+    req: IncomingMessage,
+    res: ServerResponse,
+    url: URL,
+    action: 'switch' | 'create' | 'rename' | 'delete',
+  ): Promise<void> {
+    const handler = action === 'switch' ? this.switchProfileHandler
+      : action === 'create' ? this.createProfileHandler
+      : action === 'rename' ? this.renameProfileHandler
+      : this.deleteProfileHandler
+    if (!handler) { this.sendJson(res, 501, { error: 'Not configured' }); return }
+    try {
+      const body = await this.readJson(req)
+      const rec = isRecord(body) ? body : {}
+      const name = typeof rec.name === 'string' ? rec.name.trim() : ''
+      const newName = typeof rec.newName === 'string' ? rec.newName.trim() : ''
+      if (action === 'rename') {
+        if (!name || !newName) throw new Error('Missing name or newName')
+        await this.renameProfileHandler!(name, newName)
+      } else {
+        if (!name) throw new Error('Missing profile name')
+        await (handler as (n: string) => Promise<void> | void)(name)
+      }
+      this.sendJson(res, 200, this.getState(url))
+    } catch (err) {
+      this.sendJson(res, 400, { error: err instanceof Error ? err.message : 'Profile action failed' })
+    }
   }
 
   private parseDialRequest(body: unknown): DialEventRequest {
@@ -1382,6 +1455,21 @@ export class PropertyInspectorServer {
       font: inherit;
       font-size: 12px;
     }
+    .profile-btn {
+      height: 32px;
+      min-width: 32px;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      background: #0f1113;
+      color: var(--text);
+      cursor: pointer;
+      font: inherit;
+      font-size: 13px;
+      line-height: 1;
+    }
+    .profile-btn:hover:not(:disabled) { background: #1a1d20; }
+    .profile-btn:disabled { opacity: 0.4; cursor: default; }
+    .device-bar-spacer { width: 18px; flex: 0 0 auto; }
     .brightness-slider {
       flex: 1;
       accent-color: var(--accent);
@@ -1920,7 +2008,7 @@ export class PropertyInspectorServer {
     <section class="workspace">
       <div class="header">
         <div>
-          <div class="brand">DeckBridge <span style="color:#00e676;font-weight:700">BUILD relurl-1775</span></div>
+          <div class="brand">DeckBridge <span style="color:#00e676;font-weight:700">BUILD relurl-1776</span></div>
           <div class="status" id="deckStatus">Loading</div>
         </div>
         <div class="header-actions">
@@ -1944,6 +2032,12 @@ export class PropertyInspectorServer {
         <button class="page-add" id="addPageBtn" title="Add page">+</button>
       </div>
       <div class="device-bar">
+        <span class="device-bar-label">Profile</span>
+        <select class="device-select" id="profileSelect"></select>
+        <button class="profile-btn" id="profileNewBtn" title="New profile">+</button>
+        <button class="profile-btn" id="profileRenameBtn" title="Rename profile">&#9998;</button>
+        <button class="profile-btn" id="profileDeleteBtn" title="Delete profile">&#128465;</button>
+        <span class="device-bar-spacer"></span>
         <span class="device-bar-label">Device</span>
         <select class="device-select" id="deviceSelect"></select>
         <span class="device-bar-label">&#9788; Brightness</span>
@@ -2384,6 +2478,7 @@ export class PropertyInspectorServer {
     function renderStatus() {
       byId("deckStatus").textContent = state.layout.columns + " x " + state.layout.rows + " / " + state.slots.length + " configured";
       byId("actionCount").textContent = state.actions.length + " available";
+      renderProfileSelect();
       renderDeviceSelect();
       var view = currentView();
       var breadcrumb = "Page " + ((state.activePage || 0) + 1);
@@ -2395,6 +2490,27 @@ export class PropertyInspectorServer {
       var bv = typeof state.brightness === 'number' ? state.brightness : 70;
       var slider = byId("brightnessSlider");
       if (slider && !slider._dragging) { slider.value = bv; byId("brightnessValue").textContent = bv + "%"; }
+    }
+
+    function renderProfileSelect() {
+      var select = byId("profileSelect");
+      if (!select || !state) return;
+      var profiles = Array.isArray(state.profiles) ? state.profiles : [];
+      var active = state.activeProfile || "";
+      var sig = profiles.map(function(p) { return p.name; }).join("|") + "#" + active;
+      if (select.dataset.sig !== sig) {
+        select.textContent = "";
+        profiles.forEach(function(p) {
+          var option = document.createElement("option");
+          option.value = p.name;
+          option.textContent = p.name;
+          select.appendChild(option);
+        });
+        select.dataset.sig = sig;
+      }
+      select.value = active;
+      var del = byId("profileDeleteBtn");
+      if (del) del.disabled = profiles.length <= 1;
     }
 
     function renderDeviceSelect() {
@@ -3210,6 +3326,29 @@ export class PropertyInspectorServer {
       render();
     }
 
+    async function profileAction(path, body) {
+      var response = await fetch(apiUrl(path), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body || {})
+      });
+      if (!response.ok) {
+        var message = await response.text();
+        try { message = JSON.parse(message).error || message; } catch (e) {}
+        throw new Error(message || "Profile action failed");
+      }
+      state = await response.json();
+      selectedKeyIndex = null;
+      selectedContext = null;
+      closePI();
+      render();
+    }
+
+    async function switchProfile(name) {
+      if (!name || !state || name === state.activeProfile) return;
+      await profileAction("/api/profiles/switch", { name: name });
+    }
+
     async function sendDialRotate(dialIndex, ticks) {
       var response = await fetch(apiUrl("/api/dials/rotate"), {
         method: "POST",
@@ -3601,6 +3740,42 @@ export class PropertyInspectorServer {
       selectDevice(event.target.value).catch(function(err) {
         showError(err.message || String(err));
       });
+    });
+    byId("profileSelect").addEventListener("change", function(event) {
+      switchProfile(event.target.value).catch(function(err) {
+        showError(err.message || String(err));
+        renderProfileSelect();
+      });
+    });
+    byId("profileNewBtn").addEventListener("click", function() {
+      var name = window.prompt("New profile name:", "");
+      if (name === null) return;
+      name = name.trim();
+      if (!name) return;
+      profileAction("/api/profiles/create", { name: name })
+        .then(function() { return switchProfile(name); })
+        .catch(function(err) { showError(err.message || String(err)); });
+    });
+    byId("profileRenameBtn").addEventListener("click", function() {
+      if (!state || !state.activeProfile) return;
+      var current = state.activeProfile;
+      var name = window.prompt("Rename profile '" + current + "' to:", current);
+      if (name === null) return;
+      name = name.trim();
+      if (!name || name === current) return;
+      profileAction("/api/profiles/rename", { name: current, newName: name })
+        .catch(function(err) { showError(err.message || String(err)); });
+    });
+    byId("profileDeleteBtn").addEventListener("click", function() {
+      if (!state || !state.activeProfile) return;
+      var current = state.activeProfile;
+      var others = (Array.isArray(state.profiles) ? state.profiles : []).filter(function(p) { return p.name !== current; });
+      if (!others.length) { showError("Cannot delete the only profile."); return; }
+      if (!window.confirm("Delete profile '" + current + "'? This cannot be undone.")) return;
+      // The active profile cannot be deleted server-side; switch away first.
+      switchProfile(others[0].name)
+        .then(function() { return profileAction("/api/profiles/delete", { name: current }); })
+        .catch(function(err) { showError(err.message || String(err)); });
     });
     byId("backBtn").addEventListener("click", function() {
       exitFolder().catch(function(err) {
