@@ -48,7 +48,11 @@ Doel: de editor dichter bij Stream Deck software brengen.
 
 - [x] Undo/redo voor profielwijzigingen (twee-stack model in ProfileManager, max 50 stappen, Ctrl+Z/Y en ⟲⟳ knoppen in dashboard, /api/profile/undo+redo).
 - [ ] Insert/shift-drag: slepen tussen tegels schuift de rest op.
-- [x] Meerdere pages/profielen beheren in de UI (page tabs, Insert Page After, Remove Page).
+- [x] Meerdere pages beheren in de UI (page tabs, Insert Page After, Remove Page).
+  Let op: dit dekte alleen **pages**, geen named profielen.
+- [ ] **Named profielen (profielbeheer) — huidige focus:** meerdere benoemde
+  profielen aanmaken, hernoemen, verwijderen en wisselen vanuit het dashboard,
+  los van pages/folders. Uitgewerkt in [planning.md](planning.md) sectie 7.
 - [x] Folders: tegel opent sub-grid (Create Folder, enter/leave folder navigatie, breadcrumb bar).
 - [x] Rechtsklik-menu: `Copy`.
 - [x] Rechtsklik-menu: `Paste`.

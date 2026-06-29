@@ -150,6 +150,108 @@ Klaar wanneer:
 - Gebruiker kan zien of de daemon draait.
 - App kan netjes afsluiten en plugins stoppen.
 
+### 7. Named profielen (profielbeheer) — huidige prioriteit
+
+Waarom: sectie 3 leverde pages binnen één profiel, maar geen named profielen.
+Gebruikers (dev discord) vragen om wat Elgato "profielen" noemt: meerdere
+benoemde tegel-sets die je aanmaakt, hernoemt, wist en wisselt — los van pages en
+folders, die bínnen een profiel blijven. De opslaglaag kan dit al
+(`ProfileManager.switchProfile`, één bestand per profiel in
+`~/.config/DeckBridge/profiles/<naam>.json`), maar er is geen UI en geen
+runtime-beheer; wisselen kan nu alleen via de env-var `DECKBRIDGE_PROFILE` of een
+plugin die `switchToProfile` stuurt.
+
+Begrippenkader (vastleggen om de sectie-3-verwarring te voorkomen):
+
+- Profiel = één `.json`-bestand; bevat pages en folders.
+- Page = grid binnen een profiel (bestaat al).
+- Folder = sub-grid binnen een page (bestaat al).
+
+Scope-beslissing: profielen blijven in fase 1 **globaal** (overspannen alle
+devices, zoals het huidige model met slots gekeyd op `deviceId|keyIndex`).
+Per-device profielen (zoals Elgato) is een latere verfijning — zie open vragen.
+
+#### Testregels (overgenomen uit de lhm-streamdeck dial-ontwikkeling)
+
+Deze regels komen uit `lhm-streamdeck/AGENTS.md` en de DeckBridge-`CLAUDE.md`; ze
+golden tijdens de dial-ontwikkeling en gelden net zo hard voor profielwerk:
+
+- **Zichtbare DeckBridge-wijziging → `BUILD relurl-####` ophogen** in dezelfde
+  wijziging, plus een DeckBridge-test die dat assert.
+- **Test het gerenderde, voor de gebruiker zichtbare resultaat — niet alleen het
+  protocol.** Dat `/api/profiles` of een WS-bericht klopt is niet genoeg; de
+  terugkerende bugklasse zit in hoe het dashboard de DOM rendert. Draai de echte
+  render/patch-functie tegen een DOM (jsdom-recept, zie
+  `tests/dialDeckRender.test.ts`) en assert het zichtbare resultaat: na een
+  profiel-switch verversen grid, page-tabs én de profiel-selector echt.
+- **Dek expliciet de toestanden waar bugs schuilen:** Property Inspector open én
+  dicht; in een folder én op page-niveau; leeg én gevuld profiel;
+  ontbrekende/`null`-velden.
+- **Verplichte liveness-e2e:** met een dial-PI open blijven na een profiel-switch
+  de tegels/dials in de tijd updaten (de getoonde beelden veranderen) — vangt
+  "scherm bevriest terwijl de plugin doordraait".
+- Nieuwe tests draaien in `npm test`.
+
+#### Fase 1 — Profielbeheer in het dashboard (eerst)
+
+`ProfileManager` (backend):
+
+- [ ] `listProfiles()` — namen scannen uit `profileDir` (`*.json`), met markering welk profiel actief is.
+- [ ] `getActiveProfileName()` + actieve naam als veld bijhouden.
+- [ ] `createProfile(name)` — leeg profielbestand; naamvalidatie via bestaande `normalizeProfileName`; duplicaat weigeren.
+- [ ] `renameProfile(old, new)` — bestand hernoemen, actieve verwijzing meeverhuizen.
+- [ ] `deleteProfile(name)` — bestand verwijderen; actief profiel én het laatste overgebleven profiel mogen niet weg.
+- [ ] Actieve profielkeuze persistent maken (in `device-settings.json` of een nieuwe `profiles-meta.json`), zodat een herstart de keuze onthoudt i.p.v. de env-var.
+
+`index.ts` (wiring):
+
+- [ ] `piServer.setProfileHandlers({ list, create, rename, remove, switch })` + provider.
+- [ ] Profiel-switch hergebruikt de bestaande `switchToProfile`-flow: `willDisappear` voor oude slots, `load()`, `syncNavButtons()`, display-state legen, `renderCurrentView(true)`.
+- [ ] Actieve page valideren/resetten tegen het nieuwe profiel na switch.
+
+`PropertyInspectorServer` (HTTP routes):
+
+- [ ] `GET /api/profiles` — lijst + actief.
+- [ ] `POST /api/profiles` (create), `PATCH /api/profiles/:name` (rename), `DELETE /api/profiles/:name`.
+- [ ] `POST /api/profile/switch`.
+
+Dashboard UI:
+
+- [ ] Profiel-selector naast de device-keuze onderaan (dropdown).
+- [ ] "+ Nieuw profiel", inline hernoemen, verwijderen met bevestiging.
+- [ ] Na switch grid, page-tabs en feedback live verversen (geen F5).
+
+Randgevallen:
+
+- [ ] Actief/laatste profiel niet verwijderbaar; UI in disabled state.
+- [ ] Switch terwijl je in een folder zit → eerst folders verlaten.
+- [ ] Verhouding tot `DECKBRIDGE_PROFILE`: env zet alleen het start-profiel; een UI-switch overschrijft en persisteert.
+- [ ] Naamcollisie/ongeldige tekens als zichtbare UI-fout tonen.
+
+Klaar wanneer:
+
+- [ ] Gebruiker maakt, hernoemt, wist en wisselt profielen volledig vanuit het dashboard.
+- [ ] Het gekozen profiel overleeft een herstart zonder env-var.
+- [ ] Hardware/preview toont na switch de juiste tegels; `willAppear`/`willDisappear` blijven correct.
+- [ ] `ProfileManager` profiel-CRUD heeft tests, in lijn met de bestaande mutatie-tests.
+
+#### Fase 2 — Per-applicatie profielen (later)
+
+- [ ] Profiel koppelen aan een applicatie-identifier; mapping in profiles-meta.
+- [ ] Auto-switch via de bestaande app-monitor (`applicationDidLaunch`/`applicationDidTerminate`).
+- [ ] Beperking documenteren: de monitor detecteert proces-start/stop via `ps`, geen window-focus; echte focus-detectie op Linux/Wayland is een apart traject.
+
+#### Fase 3 — Plugin-gebundelde profielen (later)
+
+- [ ] Manifest-veld `Profiles` in `PluginManager` parsen (`Name`, `DeviceType`, `Readonly`, `DontAutoSwitchWhenInstalled`).
+- [ ] `switchToProfile` naar een niet-bestaand maar door een plugin gebundeld profiel → uitrollen.
+- [ ] Onderzoek: Elgato `.streamDeckProfile`-formaat naar DeckBridge-profielformaat mappen (niet triviaal).
+
+Open vragen:
+
+- [ ] Per-device profielen (Elgato bindt een profiel aan één device-model) versus het huidige globale model. Migratiepad?
+- [ ] Profiel export/import (roadmap prio 5) samenvoegen met dit werk?
+
 ## Technische verbeteringen
 
 - `/api/state` polling vervangen door push via WebSocket of SSE.
