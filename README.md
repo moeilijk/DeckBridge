@@ -4,17 +4,90 @@ Drop-in vervanging voor de Elgato Stream Deck software op Linux. Zo compatibel m
 
 ## Status
 
-Vroege ontwikkeling. Stream Deck XL hardware, plugin runtime, Electron shell en
-een eerste visuele profiel editor werken. Zie [docs/roadmap.md](docs/roadmap.md)
-voor de actuele status.
+Vroege ontwikkeling. Stream Deck XL en Stream Deck + (inclusief dials, touch
+strip en dial-feedback) werken, naast de plugin runtime, Electron shell en een
+visuele profiel editor. Zie [docs/roadmap.md](docs/roadmap.md) voor de actuele
+status.
+
+## Quick start — test dial support on Windows (WSL2 + VSCode)
+
+DeckBridge ships with a **virtual Stream Deck +** as its default device, so you
+can develop and test dial / encoder plugins **without owning the hardware**. On
+Windows the supported way to run it is inside **WSL2**, edited from **VSCode**.
+No Stream Deck, no dials and no udev rule are required for virtual testing.
+
+### 1. One-time Windows setup
+
+In an **administrator PowerShell**:
+
+```powershell
+wsl --install            # installs WSL2 + Ubuntu (reboot if prompted)
+```
+
+Then in **VSCode**, install Microsoft's **WSL** extension and run
+`Ctrl+Shift+P` → **WSL: Connect to WSL**. You now have a VSCode window whose
+terminal and files live inside Ubuntu.
+
+### 2. Install Node.js (inside the WSL2 terminal)
+
+DeckBridge needs Node.js 20 or 22:
+
+```bash
+curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.1/install.sh | bash
+exec $SHELL
+nvm install 22
+```
+
+### 3. Deploy, build and start (inside the WSL2 terminal)
+
+```bash
+git clone https://github.com/moeilijk/DeckBridge
+cd DeckBridge
+npm install              # installs deps + builds the native HID layer
+
+npm run dev              # start: daemon + dashboard (tsx, no build step)
+```
+
+Prefer a compiled run? Build once, then start the compiled output:
+
+```bash
+npm run build            # tsc -> dist/
+npm start                # node dist/index.js
+```
+
+### 4. Open the dashboard (in your Windows browser)
+
+DeckBridge prints a URL such as:
+
+```text
+Dashboard: http://127.0.0.1:34075/dashboard?wsPort=34075
+```
+
+WSL2 forwards `localhost` to Windows automatically, so open that exact URL in
+your **Windows** browser. You get a virtual Stream Deck + with four dials, a
+touch strip and live dial feedback, all driven from the browser:
+
+- **Rotate** a dial with the `-` / `+` buttons beneath it
+- **Press** a dial with the **Press** button
+- **Tap** the touch strip with the **Touch** button
+- Keys and dial feedback render live, exactly as they are sent to the device
+
+> **Using a real Stream Deck over WSL2?** That additionally needs USB
+> passthrough (`usbipd-win`) and a HID quirk, and is only required for physical
+> hardware — virtual dial testing needs none of it. A connected device shows up
+> alongside the virtual one in the device selector at the bottom of the
+> dashboard.
 
 ## Vereisten
 
 - Node.js 20 of 24
-- Linux met udev
-- Stream Deck apparaat (primaire target: XL)
+- Een Stream Deck apparaat is **optioneel** — alleen nodig voor echte hardware;
+  de virtuele Stream Deck + werkt zonder.
 
-### udev regel (vereist voor hardware toegang zonder root)
+De onderstaande udev-regel is alleen nodig wanneer je een **fysiek** Stream Deck
+op Linux gebruikt — niet voor puur virtueel testen.
+
+### udev regel (alleen voor fysieke hardware op Linux)
 
 ```bash
 echo 'SUBSYSTEM=="hidraw", ATTRS{idVendor}=="0fd9", TAG+="uaccess"
