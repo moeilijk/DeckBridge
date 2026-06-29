@@ -193,11 +193,12 @@ export class PropertyInspectorServer {
   private dialTouchHandler: ((request: DialEventRequest) => Promise<void> | void) | null = null
   private installPluginHandler: ((sourcePath: string) => Promise<void> | void) | null = null
   private uninstallPluginHandler: ((pluginId: string) => Promise<void> | void) | null = null
-  private profileProvider: (() => { profiles: Array<{ name: string; active: boolean }>; active: string }) | null = null
+  private profileProvider: (() => { profiles: Array<{ name: string; active: boolean; app?: string }>; active: string }) | null = null
   private switchProfileHandler: ((name: string) => Promise<void> | void) | null = null
   private createProfileHandler: ((name: string) => Promise<void> | void) | null = null
   private renameProfileHandler: ((oldName: string, newName: string) => Promise<void> | void) | null = null
   private deleteProfileHandler: ((name: string) => Promise<void> | void) | null = null
+  private setProfileAppHandler: ((name: string, application: string | null) => Promise<void> | void) | null = null
   private readonly debugPI: boolean = process.env.DECKBRIDGE_DEBUG_PI === '1'
   private readonly debugPILogPath: string = process.env.DECKBRIDGE_DEBUG_PI_LOG || join(homedir(), '.config', 'DeckBridge', 'logs', 'pi-debug.log')
   private readonly preferredPort: number = Number(process.env.DECKBRIDGE_PI_PORT ?? 34075)
@@ -326,7 +327,7 @@ export class PropertyInspectorServer {
     this.uninstallPluginHandler = handlers.uninstall
   }
 
-  setProfileProvider(fn: () => { profiles: Array<{ name: string; active: boolean }>; active: string }): void {
+  setProfileProvider(fn: () => { profiles: Array<{ name: string; active: boolean; app?: string }>; active: string }): void {
     this.profileProvider = fn
   }
 
@@ -335,11 +336,13 @@ export class PropertyInspectorServer {
     create: (name: string) => Promise<void> | void
     rename: (oldName: string, newName: string) => Promise<void> | void
     remove: (name: string) => Promise<void> | void
+    setApp: (name: string, application: string | null) => Promise<void> | void
   }): void {
     this.switchProfileHandler = handlers.switch
     this.createProfileHandler = handlers.create
     this.renameProfileHandler = handlers.rename
     this.deleteProfileHandler = handlers.remove
+    this.setProfileAppHandler = handlers.setApp
   }
 
   async start(pluginBaseDir: string): Promise<void> {
@@ -569,6 +572,11 @@ export class PropertyInspectorServer {
       return
     }
 
+    if (url.pathname === '/api/profiles/app' && req.method === 'POST') {
+      await this.handleProfileAction(req, res, url, 'app')
+      return
+    }
+
     if (url.pathname === '/api/dials/rotate' && req.method === 'POST') {
       await this.handleDialRotate(req, res)
       return
@@ -778,11 +786,12 @@ export class PropertyInspectorServer {
     req: IncomingMessage,
     res: ServerResponse,
     url: URL,
-    action: 'switch' | 'create' | 'rename' | 'delete',
+    action: 'switch' | 'create' | 'rename' | 'delete' | 'app',
   ): Promise<void> {
     const handler = action === 'switch' ? this.switchProfileHandler
       : action === 'create' ? this.createProfileHandler
       : action === 'rename' ? this.renameProfileHandler
+      : action === 'app' ? this.setProfileAppHandler
       : this.deleteProfileHandler
     if (!handler) { this.sendJson(res, 501, { error: 'Not configured' }); return }
     try {
@@ -793,6 +802,10 @@ export class PropertyInspectorServer {
       if (action === 'rename') {
         if (!name || !newName) throw new Error('Missing name or newName')
         await this.renameProfileHandler!(name, newName)
+      } else if (action === 'app') {
+        if (!name) throw new Error('Missing profile name')
+        const application = typeof rec.application === 'string' ? rec.application.trim() : ''
+        await this.setProfileAppHandler!(name, application || null)
       } else {
         if (!name) throw new Error('Missing profile name')
         await (handler as (n: string) => Promise<void> | void)(name)
@@ -2008,7 +2021,7 @@ export class PropertyInspectorServer {
     <section class="workspace">
       <div class="header">
         <div>
-          <div class="brand">DeckBridge <span style="color:#00e676;font-weight:700">BUILD relurl-1776</span></div>
+          <div class="brand">DeckBridge <span style="color:#00e676;font-weight:700">BUILD relurl-1777</span></div>
           <div class="status" id="deckStatus">Loading</div>
         </div>
         <div class="header-actions">
@@ -2036,6 +2049,7 @@ export class PropertyInspectorServer {
         <select class="device-select" id="profileSelect"></select>
         <button class="profile-btn" id="profileNewBtn" title="New profile">+</button>
         <button class="profile-btn" id="profileRenameBtn" title="Rename profile">&#9998;</button>
+        <button class="profile-btn" id="profileAppBtn" title="Auto-switch for application">&#128279;</button>
         <button class="profile-btn" id="profileDeleteBtn" title="Delete profile">&#128465;</button>
         <span class="device-bar-spacer"></span>
         <span class="device-bar-label">Device</span>
@@ -2497,13 +2511,13 @@ export class PropertyInspectorServer {
       if (!select || !state) return;
       var profiles = Array.isArray(state.profiles) ? state.profiles : [];
       var active = state.activeProfile || "";
-      var sig = profiles.map(function(p) { return p.name; }).join("|") + "#" + active;
+      var sig = profiles.map(function(p) { return p.name + ":" + (p.app || ""); }).join("|") + "#" + active;
       if (select.dataset.sig !== sig) {
         select.textContent = "";
         profiles.forEach(function(p) {
           var option = document.createElement("option");
           option.value = p.name;
-          option.textContent = p.name;
+          option.textContent = p.name + (p.app ? "  → " + p.app : "");
           select.appendChild(option);
         });
         select.dataset.sig = sig;
@@ -2511,6 +2525,13 @@ export class PropertyInspectorServer {
       select.value = active;
       var del = byId("profileDeleteBtn");
       if (del) del.disabled = profiles.length <= 1;
+      var appBtn = byId("profileAppBtn");
+      if (appBtn) {
+        var activeEntry = profiles.filter(function(p) { return p.name === active; })[0];
+        var boundApp = activeEntry && activeEntry.app ? activeEntry.app : "";
+        appBtn.title = boundApp ? ("Auto-switch for: " + boundApp + " (click to change)") : "Auto-switch for application";
+        appBtn.style.color = boundApp ? "#00e676" : "";
+      }
     }
 
     function renderDeviceSelect() {
@@ -3764,6 +3785,16 @@ export class PropertyInspectorServer {
       name = name.trim();
       if (!name || name === current) return;
       profileAction("/api/profiles/rename", { name: current, newName: name })
+        .catch(function(err) { showError(err.message || String(err)); });
+    });
+    byId("profileAppBtn").addEventListener("click", function() {
+      if (!state || !state.activeProfile) return;
+      var current = state.activeProfile;
+      var entry = (Array.isArray(state.profiles) ? state.profiles : []).filter(function(p) { return p.name === current; })[0];
+      var existing = entry && entry.app ? entry.app : "";
+      var app = window.prompt("Auto-switch to '" + current + "' while this application runs. Enter the process name (empty to clear):", existing);
+      if (app === null) return;
+      profileAction("/api/profiles/app", { name: current, application: app.trim() })
         .catch(function(err) { showError(err.message || String(err)); });
     });
     byId("profileDeleteBtn").addEventListener("click", function() {

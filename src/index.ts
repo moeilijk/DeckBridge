@@ -2,6 +2,7 @@ import { DeviceManager } from './core/hardware/DeviceManager.js'
 import { PluginServer } from './core/websocket/PluginServer.js'
 import { PluginManager } from './core/plugins/PluginManager.js'
 import { ProfileManager, type ButtonSlot } from './core/profiles/ProfileManager.js'
+import { resolveAppProfileSwitch, buildAppToProfile } from './core/profiles/appProfiles.js'
 import { PropertyInspectorServer } from './core/pi/PropertyInspectorServer.js'
 import { renderTitle, renderBlack } from './core/render/renderButton.js'
 import { spawn, execFile } from 'child_process'
@@ -119,15 +120,38 @@ async function main() {
     }
   }
 
+  // Per-application profile bindings (profile name → application identifier).
+  const profilesMetaPath = join(configDir, 'profiles-meta.json')
+  type ProfilesMeta = { profileApps: Record<string, string> }
+  function loadProfilesMeta(): ProfilesMeta {
+    try {
+      const parsed = JSON.parse(readFileSync(profilesMetaPath, 'utf-8')) as Partial<ProfilesMeta>
+      const apps = parsed.profileApps
+      return { profileApps: apps && typeof apps === 'object' ? apps as Record<string, string> : {} }
+    } catch {
+      return { profileApps: {} }
+    }
+  }
+  function saveProfilesMeta(): void {
+    try { mkdirSync(configDir, { recursive: true }); writeFileSync(profilesMetaPath, JSON.stringify(profilesMeta, null, 2)) } catch { /* ignore */ }
+  }
+  const profilesMeta = loadProfilesMeta()
+
+  // The profile the user last chose manually — the fallback when no bound app is
+  // running. `activeAppProfile` is the app currently driving an auto-switch.
+  let manualProfile = profileManager.getActiveProfileName()
+  let activeAppProfile: string | null = null
+
   // Cached profile list for the dashboard (getState is synchronous; listProfiles
   // is not). Refreshed at startup and after every profile mutation.
-  let profilesSnapshot: { profiles: Array<{ name: string; active: boolean }>; active: string } = {
+  let profilesSnapshot: { profiles: Array<{ name: string; active: boolean; app?: string }>; active: string } = {
     profiles: [],
     active: profileManager.getActiveProfileName(),
   }
   async function refreshProfiles(): Promise<void> {
+    const list = await profileManager.listProfiles()
     profilesSnapshot = {
-      profiles: await profileManager.listProfiles(),
+      profiles: list.map((p) => ({ ...p, app: profilesMeta.profileApps[p.name] || undefined })),
       active: profileManager.getActiveProfileName(),
     }
   }
@@ -460,7 +484,32 @@ async function main() {
       .split(',')
       .map((v) => v.trim())
       .filter(Boolean)
-    return Array.from(new Set([...fromManifest, ...fromEnv]))
+    const fromProfiles = Object.values(profilesMeta.profileApps).filter(Boolean)
+    return Array.from(new Set([...fromManifest, ...fromEnv, ...fromProfiles]))
+  }
+
+  // Switch profiles based on which bound application is running (phase 2). Focus
+  // is not detectable from Linux/WSL2, so this tracks "running", not "focused".
+  async function reconcileAppProfile(current: Set<string>, previous: Set<string>): Promise<void> {
+    const appToProfile = buildAppToProfile(profilesMeta.profileApps)
+    if (appToProfile.size === 0) { activeAppProfile = null; return }
+    const decision = resolveAppProfileSwitch({
+      current, previous, appToProfile,
+      activeApp: activeAppProfile,
+      manualProfile,
+    })
+    activeAppProfile = decision.activeApp
+    if (process.env.DECKBRIDGE_DEBUG_APP === '1' && (decision.switchTo || current.size > 0)) {
+      console.log(`[app-profile] running=${[...current]} switchTo=${decision.switchTo ?? '-'} activeApp=${decision.activeApp ?? '-'}`)
+    }
+    if (decision.switchTo && decision.switchTo !== profileManager.getActiveProfileName()) {
+      try {
+        await switchToNamedProfile(decision.switchTo, { persist: false })
+        await refreshProfiles()
+      } catch {
+        // The bound profile may have been deleted/renamed — leave the current one.
+      }
+    }
   }
 
   function listRunningProcessNames(): Promise<Set<string>> {
@@ -515,6 +564,8 @@ async function main() {
             })
           }
         }
+
+        await reconcileAppProfile(current, previous)
 
         previous = current
       } finally {
@@ -1352,7 +1403,8 @@ async function main() {
 
   piServer.setProfileProvider(() => profilesSnapshot)
 
-  async function switchToNamedProfile(name: string): Promise<boolean> {
+  async function switchToNamedProfile(name: string, opts: { persist?: boolean } = {}): Promise<boolean> {
+    const persist = opts.persist ?? true
     if (name === profileManager.getActiveProfileName()) return false
     const available = await profileManager.listProfiles()
     if (!available.some((p) => p.name === name)) throw new Error(`Profile not found: ${name}`)
@@ -1368,13 +1420,20 @@ async function main() {
     await profileManager.save()
     clearAllDisplayState()
     await renderCurrentView(true)
-    deviceSettings.activeProfile = name
-    saveDeviceSettings(deviceSettings)
+    // Only a manual (dashboard) switch sets the restore-on-startup profile; an
+    // app-driven auto-switch must not overwrite the user's manual choice.
+    if (persist) {
+      deviceSettings.activeProfile = name
+      saveDeviceSettings(deviceSettings)
+    }
     return true
   }
 
   piServer.setProfileHandlers({
     switch: async (name) => {
+      // A manual switch becomes the new fallback and cancels any active app-switch.
+      manualProfile = name
+      activeAppProfile = null
       await switchToNamedProfile(name)
       await refreshProfiles()
     },
@@ -1385,6 +1444,13 @@ async function main() {
     rename: async (oldName, newName) => {
       const wasActive = oldName === profileManager.getActiveProfileName()
       const safe = await profileManager.renameProfile(oldName, newName)
+      // Carry the app binding and manual-fallback reference across the rename.
+      if (profilesMeta.profileApps[oldName]) {
+        profilesMeta.profileApps[safe] = profilesMeta.profileApps[oldName]
+        delete profilesMeta.profileApps[oldName]
+        saveProfilesMeta()
+      }
+      if (manualProfile === oldName) manualProfile = safe
       if (wasActive) {
         deviceSettings.activeProfile = safe
         saveDeviceSettings(deviceSettings)
@@ -1393,6 +1459,24 @@ async function main() {
     },
     remove: async (name) => {
       await profileManager.deleteProfile(name)
+      if (profilesMeta.profileApps[name]) {
+        delete profilesMeta.profileApps[name]
+        saveProfilesMeta()
+      }
+      await refreshProfiles()
+    },
+    setApp: async (name, application) => {
+      const app = (application ?? '').trim()
+      if (app) {
+        // Enforce one app → one profile: clear the app from any other profile.
+        for (const key of Object.keys(profilesMeta.profileApps)) {
+          if (profilesMeta.profileApps[key] === app) delete profilesMeta.profileApps[key]
+        }
+        profilesMeta.profileApps[name] = app
+      } else {
+        delete profilesMeta.profileApps[name]
+      }
+      saveProfilesMeta()
       await refreshProfiles()
     },
   })

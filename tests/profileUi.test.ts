@@ -41,3 +41,26 @@ test('renderProfileSelect lists profiles, marks the active one, and gates the de
   assert.deepEqual(Array.from(select.options).map((o) => o.value), ['default'])
   assert.equal((d.getElementById('profileDeleteBtn') as unknown as HTMLButtonElement).disabled, true)
 })
+
+test('renderProfileSelect shows the app binding in the option label and highlights the app button', async () => {
+  const src = await extractClientFn('function renderProfileSelect()')
+  const dom = new JSDOM('<select id="profileSelect"></select><button id="profileDeleteBtn"></button><button id="profileAppBtn"></button>')
+  const d = dom.window.document
+  const byId = (id: string) => d.getElementById(id)
+  const factory = new Function('document', 'byId', 'state', `${src}\n; return renderProfileSelect;`)
+
+  // 'streaming' is active and bound to the 'obs' application.
+  const state = {
+    profiles: [{ name: 'default', active: false }, { name: 'streaming', active: true, app: 'obs' }],
+    activeProfile: 'streaming',
+  }
+  factory(d, byId, state)()
+
+  const select = d.getElementById('profileSelect') as unknown as HTMLSelectElement
+  const streamingOption = Array.from(select.options).find((o) => o.value === 'streaming')
+  assert.ok(streamingOption && streamingOption.textContent.includes('obs'), 'bound app shows in the option label')
+
+  const appBtn = d.getElementById('profileAppBtn') as unknown as HTMLButtonElement
+  assert.match(appBtn.title, /obs/, 'app button tooltip names the bound application')
+  assert.equal(appBtn.style.color, 'rgb(0, 230, 118)', 'app button is highlighted when the active profile is bound')
+})
