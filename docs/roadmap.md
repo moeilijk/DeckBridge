@@ -110,6 +110,38 @@ Doel: plugins en apparaten makkelijker beheren.
 - [ ] Chromium remote devtools voor PI debugging.
 - [ ] Automatische updates.
 
+## Functionele pariteit met de originele Elgato-software
+
+Stand: de plugin-runtime, de editor (pages/folders), de Stream Deck +-dials en
+touch strip, en profielen (named, per-applicatie, plugin-gebundeld) zitten dicht
+op het origineel. Open-source en cross-platform plugins draaien grotendeels
+ongewijzigd. De resterende functionele gaten zijn getrackt onder de milestone
+[**Elgato feature parity**](https://github.com/moeilijk/DeckBridge/milestone/1):
+
+Grootste impact:
+
+- [ ] **Ingebouwde actie-bibliotheek** (Hotkey, Open/Website, Text, Multimedia,
+  System) — [#3](https://github.com/moeilijk/DeckBridge/issues/3). Het origineel
+  levert tientallen built-ins; DeckBridge heeft alleen systeem-navigatie. Dit is
+  het grootste gat.
+- [ ] **Multi-Actions** (meerdere acties per knop) — [#4](https://github.com/moeilijk/DeckBridge/issues/4).
+  `isInMultiAction` is nu overal `false`.
+
+Breedte en beheer:
+
+- [ ] **Bredere device-dekking** (Mini, MK.2, Neo, Pedal, Mobile) — [#5](https://github.com/moeilijk/DeckBridge/issues/5).
+  Nu primair XL + Plus.
+- [ ] **Profiel export/import + backups** — [#6](https://github.com/moeilijk/DeckBridge/issues/6).
+- [ ] **Multi-device tegelijk aansturen** — [#9](https://github.com/moeilijk/DeckBridge/issues/9).
+
+Protocol en integratie:
+
+- [ ] **Deep links `streamdeck://`** — [#7](https://github.com/moeilijk/DeckBridge/issues/7).
+- [ ] **`setResources` / `didReceiveResources`** (nieuwere SDK) — [#8](https://github.com/moeilijk/DeckBridge/issues/8).
+
+Niet op te lossen — zie Permanente beperkingen hieronder (DRM-plugins,
+`platform="mac"`, Wine voor `.exe`).
+
 ## Permanente beperkingen
 
 - DRM-beveiligde marketplace plugins werken niet. Elgato's key-infrastructure is
