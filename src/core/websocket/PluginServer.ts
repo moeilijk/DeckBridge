@@ -128,6 +128,22 @@ export class PluginServer extends EventEmitter {
     } catch {
       return
     }
+
+    // Re-registration on an already-open socket. The Elgato SDK re-fires the
+    // register/appear events every time a PI (re)connects with the same context;
+    // a repeat register* event here must re-emit pluginRegistered so the host
+    // sends a fresh propertyInspectorDidAppear (issue #1).
+    if ((msg.event === 'registerPropertyInspector' || msg.event === 'registerPlugin') && typeof msg.uuid === 'string') {
+      const isPI = msg.event === 'registerPropertyInspector'
+      client.uuid = msg.uuid
+      client.type = isPI ? 'propertyInspector' : 'plugin'
+      if (isPI) this.piByContext.set(msg.uuid, client)
+      else this.clients.set(msg.uuid, client)
+      this.logPIDebug('re-register', { context: msg.uuid, type: client.type })
+      this.emit('pluginRegistered', msg.uuid, client.type)
+      return
+    }
+
     if (client.type === 'propertyInspector') {
       this.logPIDebug('message-from-pi', {
         context: client.uuid,
