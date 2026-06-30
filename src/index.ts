@@ -994,15 +994,35 @@ async function main() {
       case 'switchToProfile': {
         const profileName: unknown = payload.profile
         if (typeof profileName === 'string' && profileName.trim()) {
+          const name = profileName.trim()
+          // Phase 3: if the named profile does not exist yet but the sending plugin
+          // bundles it, deploy the .streamDeckProfile into a DeckBridge profile first.
+          if (senderType === 'plugin') {
+            const exists = (await profileManager.listProfiles()).some((p) => p.name === name)
+            if (!exists) {
+              const pluginId = pluginManager.getPluginIdByPluginUUID(senderUUID)
+              if (pluginId && pluginManager.getBundledProfiles(pluginId).some((p) => p.name === name)) {
+                const devId = getActiveDeviceId()
+                await pluginManager.deployBundledProfile({
+                  pluginId,
+                  profileName: name,
+                  deviceId: devId,
+                  columns: deviceManager.getColumns(devId),
+                  destPath: profileManager.profilePathFor(name),
+                })
+              }
+            }
+          }
           // Load the named profile, then optionally jump to the requested page.
           const oldSlots = profileManager.getAllSlots()
-          await profileManager.switchProfile(profileName.trim())
+          await profileManager.switchProfile(name)
           await profileManager.save()
           for (const s of oldSlots) {
             if (s.slot.pluginId !== SYSTEM_PLUGIN) sendWillDisappear(s.deviceId, s.keyIndex, s.slot)
           }
           clearAllDisplayState()
           await renderCurrentView(true)
+          await refreshProfiles()
           const pageValue: unknown = payload.pageNumber ?? payload.page
           if (typeof pageValue === 'number' && Number.isInteger(pageValue)) {
             const pageIndex = Math.max(0, pageValue)

@@ -6,6 +6,8 @@ import { spawn, execFile, ChildProcess } from 'child_process'
 import { randomUUID } from 'crypto'
 import { promisify } from 'util'
 
+import { deployStreamDeckProfileArchive } from '../profiles/streamDeckProfile.js'
+
 const execFileAsync = promisify(execFile)
 
 interface ManifestAction {
@@ -22,6 +24,13 @@ interface ManifestAction {
   }
 }
 
+interface ManifestProfile {
+  Name?: string
+  DeviceType?: number
+  Readonly?: boolean
+  DontAutoSwitchWhenInstalled?: boolean
+}
+
 interface Manifest {
   UUID?: string
   Name?: string
@@ -35,6 +44,14 @@ interface Manifest {
   PropertyInspectorPath?: string  // globale fallback PI
   ApplicationsToMonitor?: string[] | { linux?: string[]; mac?: string[]; windows?: string[] }
   Actions?: ManifestAction[]
+  Profiles?: ManifestProfile[]
+}
+
+export interface BundledProfile {
+  name: string
+  deviceType: number
+  readonly: boolean
+  dontAutoSwitch: boolean
 }
 
 export interface PluginActionInfo {
@@ -61,6 +78,7 @@ export interface PluginInfo {
   defaultPiPath: string  // fallback PropertyInspectorPath
   actions: Map<string, PluginActionInfo>  // actionId -> action metadata
   applicationsToMonitor: string[]
+  bundledProfiles: BundledProfile[]       // manifest "Profiles" the plugin ships
 }
 
 export interface InstalledPluginInfo {
@@ -179,6 +197,14 @@ export class PluginManager {
       defaultPiPath: manifest.PropertyInspectorPath ?? '',
       actions: actionMap,
       applicationsToMonitor: this.parseApplicationsToMonitor(manifest.ApplicationsToMonitor),
+      bundledProfiles: (manifest.Profiles ?? [])
+        .filter((p): p is ManifestProfile & { Name: string } => typeof p.Name === 'string' && p.Name.length > 0)
+        .map((p) => ({
+          name: p.Name,
+          deviceType: typeof p.DeviceType === 'number' ? p.DeviceType : 0,
+          readonly: Boolean(p.Readonly),
+          dontAutoSwitch: Boolean(p.DontAutoSwitchWhenInstalled),
+        })),
     })
 
     const pluginUUID = randomUUID()
@@ -475,6 +501,33 @@ export class PluginManager {
 
   getPluginIdByPluginUUID(pluginUUID: string): string | undefined {
     return this.instances.get(pluginUUID)?.uuid
+  }
+
+  /** Profiles a plugin ships in its manifest (Elgato "Profiles" field). */
+  getBundledProfiles(pluginId: string): BundledProfile[] {
+    return this.pluginInfo.get(pluginId)?.bundledProfiles ?? []
+  }
+
+  /**
+   * Deploy a plugin-bundled `.streamDeckProfile` to a DeckBridge profile file.
+   * The archive name matches the manifest profile Name. Returns true when written.
+   */
+  async deployBundledProfile(opts: {
+    pluginId: string
+    profileName: string
+    deviceId: string
+    columns: number
+    destPath: string
+  }): Promise<boolean> {
+    const info = this.pluginInfo.get(opts.pluginId)
+    if (!info || !info.bundledProfiles.some((p) => p.name === opts.profileName)) return false
+    return deployStreamDeckProfileArchive({
+      archivePath: join(info.pluginDir, `${opts.profileName}.streamDeckProfile`),
+      pluginId: opts.pluginId,
+      deviceId: opts.deviceId,
+      columns: opts.columns,
+      destPath: opts.destPath,
+    })
   }
 
   async appendPluginLog(pluginUUID: string, message: string): Promise<void> {

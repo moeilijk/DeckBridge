@@ -96,6 +96,11 @@ export class ProfileManager {
 
   getActiveProfileName(): string { return this.profileName }
 
+  /** Absolute path the given profile name maps to on disk. */
+  profilePathFor(name: string): string {
+    return join(this.profileDir, `${normalizeProfileName(name)}.json`)
+  }
+
   // ── Profile management (named profiles) ─────────────────────────────────────
 
   /** List all named profiles in the profile directory, marking the active one. */
