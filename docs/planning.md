@@ -192,60 +192,57 @@ golden tijdens de dial-ontwikkeling en gelden net zo hard voor profielwerk:
   "scherm bevriest terwijl de plugin doordraait".
 - Nieuwe tests draaien in `npm test`.
 
-#### Fase 1 — Profielbeheer in het dashboard (eerst)
+#### Fase 1 — Profielbeheer in het dashboard ✓ (commit `97e473e`)
 
 `ProfileManager` (backend):
 
-- [ ] `listProfiles()` — namen scannen uit `profileDir` (`*.json`), met markering welk profiel actief is.
-- [ ] `getActiveProfileName()` + actieve naam als veld bijhouden.
-- [ ] `createProfile(name)` — leeg profielbestand; naamvalidatie via bestaande `normalizeProfileName`; duplicaat weigeren.
-- [ ] `renameProfile(old, new)` — bestand hernoemen, actieve verwijzing meeverhuizen.
-- [ ] `deleteProfile(name)` — bestand verwijderen; actief profiel én het laatste overgebleven profiel mogen niet weg.
-- [ ] Actieve profielkeuze persistent maken (in `device-settings.json` of een nieuwe `profiles-meta.json`), zodat een herstart de keuze onthoudt i.p.v. de env-var.
+- [x] `listProfiles()` — namen scannen uit `profileDir` (`*.json`), met markering welk profiel actief is.
+- [x] `getActiveProfileName()` + actieve naam als veld bijhouden.
+- [x] `createProfile(name)` — leeg profielbestand; naamvalidatie via bestaande `normalizeProfileName`; duplicaat weigeren.
+- [x] `renameProfile(old, new)` — bestand hernoemen, actieve verwijzing meeverhuizen.
+- [x] `deleteProfile(name)` — bestand verwijderen; actief profiel én het laatste overgebleven profiel mogen niet weg.
+- [x] Actieve profielkeuze persistent maken (in `device-settings.json`), zodat een herstart de keuze onthoudt i.p.v. de env-var.
 
 `index.ts` (wiring):
 
-- [ ] `piServer.setProfileHandlers({ list, create, rename, remove, switch })` + provider.
-- [ ] Profiel-switch hergebruikt de bestaande `switchToProfile`-flow: `willDisappear` voor oude slots, `load()`, `syncNavButtons()`, display-state legen, `renderCurrentView(true)`.
-- [ ] Actieve page valideren/resetten tegen het nieuwe profiel na switch.
+- [x] `piServer.setProfileHandlers({ switch, create, rename, remove, setApp })` + provider.
+- [x] Profiel-switch hergebruikt de bestaande `switchToProfile`-flow: `willDisappear` voor oude slots, `load()`, `syncNavButtons()`, display-state legen, `renderCurrentView(true)`.
 
 `PropertyInspectorServer` (HTTP routes):
 
-- [ ] `GET /api/profiles` — lijst + actief.
-- [ ] `POST /api/profiles` (create), `PATCH /api/profiles/:name` (rename), `DELETE /api/profiles/:name`.
-- [ ] `POST /api/profile/switch`.
+- [x] Profielen in `/api/state`.
+- [x] `POST /api/profiles/{create,rename,delete,switch}` (alle POST i.p.v. REST-verbs, consistent met de bestaande routes).
 
 Dashboard UI:
 
-- [ ] Profiel-selector naast de device-keuze onderaan (dropdown).
-- [ ] "+ Nieuw profiel", inline hernoemen, verwijderen met bevestiging.
-- [ ] Na switch grid, page-tabs en feedback live verversen (geen F5).
+- [x] Profiel-selector naast de device-keuze onderaan (dropdown).
+- [x] "+ Nieuw profiel", hernoemen (prompt), verwijderen met bevestiging.
+- [x] Na switch grid, page-tabs en feedback live verversen (geen F5).
 
 Randgevallen:
 
-- [ ] Actief/laatste profiel niet verwijderbaar; UI in disabled state.
-- [ ] Switch terwijl je in een folder zit → eerst folders verlaten.
-- [ ] Verhouding tot `DECKBRIDGE_PROFILE`: env zet alleen het start-profiel; een UI-switch overschrijft en persisteert.
-- [ ] Naamcollisie/ongeldige tekens als zichtbare UI-fout tonen.
+- [x] Actief/laatste profiel niet verwijderbaar; UI in disabled state.
+- [x] Verhouding tot `DECKBRIDGE_PROFILE`: env zet alleen het start-profiel; een UI-switch overschrijft en persisteert. Uitgaand profiel wordt opgeslagen vóór de switch (nooit-opgeslagen actief profiel blijft bestaan).
+- [x] Naamcollisie/ongeldige tekens als zichtbare UI-fout tonen.
 
 Klaar wanneer:
 
-- [ ] Gebruiker maakt, hernoemt, wist en wisselt profielen volledig vanuit het dashboard.
-- [ ] Het gekozen profiel overleeft een herstart zonder env-var.
-- [ ] Hardware/preview toont na switch de juiste tegels; `willAppear`/`willDisappear` blijven correct.
-- [ ] `ProfileManager` profiel-CRUD heeft tests, in lijn met de bestaande mutatie-tests.
+- [x] Gebruiker maakt, hernoemt, wist en wisselt profielen volledig vanuit het dashboard.
+- [x] Het gekozen profiel overleeft een herstart zonder env-var.
+- [x] Hardware/preview toont na switch de juiste tegels; `willAppear`/`willDisappear` blijven correct.
+- [x] `ProfileManager` profiel-CRUD heeft tests + een jsdom render-test voor de selector.
 
-#### Fase 2 — Per-applicatie profielen (later)
+#### Fase 2 — Per-applicatie profielen ✓ (commit `f825919`)
 
-- [ ] Profiel koppelen aan een applicatie-identifier; mapping in profiles-meta.
-- [ ] Auto-switch via de bestaande app-monitor (`applicationDidLaunch`/`applicationDidTerminate`).
-- [ ] Beperking documenteren: de monitor detecteert proces-start/stop via `ps`, geen window-focus; echte focus-detectie op Linux/Wayland is een apart traject.
+- [x] Profiel koppelen aan een applicatie-identifier; mapping in `profiles-meta.json`.
+- [x] Auto-switch via de bestaande app-monitor (pure `resolveAppProfileSwitch` + reconcile); manual switch wint en is de fallback.
+- [x] Beperking gedocumenteerd: de monitor leest de WSL/Linux-processenlijst via `ps`, geen window-focus en geen Windows-apps; echte focus-detectie is een apart traject.
 
-#### Fase 3 — Plugin-gebundelde profielen (later)
+#### Fase 3 — Plugin-gebundelde profielen ✓ (commit `e628b4d`)
 
-- [ ] Manifest-veld `Profiles` in `PluginManager` parsen (`Name`, `DeviceType`, `Readonly`, `DontAutoSwitchWhenInstalled`).
-- [ ] `switchToProfile` naar een niet-bestaand maar door een plugin gebundeld profiel → uitrollen.
-- [ ] Onderzoek: Elgato `.streamDeckProfile`-formaat naar DeckBridge-profielformaat mappen (niet triviaal).
+- [x] Manifest-veld `Profiles` in `PluginManager` parsen (`Name`, `DeviceType`, `Readonly`, `DontAutoSwitchWhenInstalled`).
+- [x] `switchToProfile` naar een niet-bestaand maar door een plugin gebundeld profiel → uitrollen.
+- [x] Elgato `.streamDeckProfile`-formaat naar DeckBridge-profielformaat mappen (pure `convertStreamDeckProfile` + `deployStreamDeckProfileArchive`, getest tegen een echte zip + live e2e).
 
 Open vragen:
 
